@@ -1,0 +1,43 @@
+@page { size: A4; margin: 18mm 16mm 18mm 16mm; }
+html { font-size: 10.5pt; }
+body { font-family: "DejaVu Sans", "Noto Sans", Arial, sans-serif; color: #1c2b33; line-height: 1.45; margin: 0; }
+section.chapter { page-break-before: always; }
+section.chapter:first-of-type { page-break-before: auto; }
+h1 { font-size: 22pt; color: #0d3b4c; border-bottom: 3px solid #0f7c8c; padding-bottom: 4px; margin: 0 0 14px 0; }
+h1 .num { color: #0f7c8c; margin-right: 8px; }
+h2 { font-size: 14.5pt; color: #0f5f6e; margin: 20px 0 8px 0; page-break-after: avoid; }
+h3 { font-size: 11.5pt; color: #1c2b33; margin: 14px 0 6px 0; page-break-after: avoid; }
+p { margin: 0 0 8px 0; }
+ul, ol { margin: 0 0 8px 0; padding-left: 22px; }
+li { margin-bottom: 3px; }
+table { border-collapse: collapse; width: 100%; margin: 8px 0 12px 0; font-size: 9.5pt; page-break-inside: auto; }
+th, td { border: 1px solid #c9d6db; padding: 5px 7px; vertical-align: top; text-align: left; }
+th { background: #e8f1f4; color: #0d3b4c; }
+tr { page-break-inside: avoid; }
+code { font-family: "DejaVu Sans Mono", monospace; font-size: 9pt; background: #f1f5f7; padding: 1px 4px; border-radius: 3px; }
+pre { font-family: "DejaVu Sans Mono", monospace; font-size: 8.6pt; background: #f6f8fa; border: 1px solid #d9e2e7; border-left: 4px solid #0f7c8c; padding: 8px 10px; white-space: pre-wrap; word-wrap: break-word; margin: 8px 0 12px 0; line-height: 1.35; }
+pre code { background: none; padding: 0; font-size: inherit; }
+.box { border-left: 5px solid; padding: 7px 11px; margin: 10px 0 12px 0; border-radius: 3px; page-break-inside: avoid; }
+.box .label { font-size: 8.5pt; font-weight: bold; letter-spacing: 0.08em; text-transform: uppercase; margin-bottom: 3px; }
+.box p:last-child { margin-bottom: 0; }
+.box.why { background: #e9f3f6; border-color: #0f7c8c; } .box.why .label { color: #0f7c8c; }
+.box.tip { background: #e8f5ec; border-color: #2f8f4e; } .box.tip .label { color: #2f8f4e; }
+.box.careful { background: #fff3e2; border-color: #d9822b; } .box.careful .label { color: #b86512; }
+.box.measure { background: #f3ecfb; border-color: #7b4fb3; } .box.measure .label { color: #6a3fa0; }
+.box.story { background: #f4f6f7; border-color: #5b7083; } .box.story .label { color: #5b7083; }
+figure { margin: 10px 0 14px 0; page-break-inside: avoid; text-align: center; }
+figure svg { max-width: 100%; height: auto; }
+figcaption { font-size: 9pt; color: #5b7083; margin-top: 4px; text-align: left; }
+.kv { display: grid; grid-template-columns: 1fr 1fr; gap: 0 18px; }
+.small { font-size: 9pt; color: #5b7083; }
+.cover { page-break-after: always; padding-top: 120mm; }
+.cover .kicker { color: #0f7c8c; font-weight: bold; letter-spacing: 0.15em; font-size: 10pt; }
+.cover h1 { font-size: 34pt; border: none; margin: 6px 0 10px 0; }
+.cover .sub { font-size: 14pt; color: #334; max-width: 130mm; }
+.toc { page-break-after: always; }
+.toc ol { list-style: none; padding-left: 0; column-count: 2; column-gap: 24px; }
+.toc li { margin-bottom: 6px; break-inside: avoid; }
+.toc li .n { display: inline-block; width: 24px; color: #0f7c8c; font-weight: bold; }
+.toc li ul { list-style: none; padding-left: 26px; font-size: 9pt; color: #456; margin-top: 2px; }
+.toc li ul li { margin-bottom: 1px; }
+.check { font-family: "DejaVu Sans"; }

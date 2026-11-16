@@ -1,0 +1,191 @@
+# Writing conventions for the Self-Checkout Kiosk book (READ FULLY BEFORE WRITING ANYTHING)
+
+## What this book is
+A complete, beginner-level book about the project on the reader's resume:
+
+  Edge-AI Self-Checkout Kiosk            Raspberry Pi 4 · Python · NumPy · OpenCV · HX711
+  - Built a self-checkout kiosk that uses image classification to identify 12 Indian fruits and
+    vegetables and calculates the price from a load cell.
+  - Implemented a CNN image classifier from scratch in Python, reaching 92.6% test accuracy and
+    running on-device on the Raspberry Pi 4.
+  - Connected the HX711 load cell directly to the Pi and filtered the readings for stable weights,
+    then built a touchscreen app that shows an itemised bill.
+
+The reader built version 1 of this project (YOLOv5 + ESP8266 + laptop, see V1_SUMMARY.md), forgot the
+details, and now needs version 2 (the resume version) explained as a finished project. After reading, they
+must feel the project is complete and be able to explain every part and every "why" in an interview.
+
+## Voice and language (very important)
+- First person, finished-project voice: "I built", "the kiosk does", "I chose X because". Never "you could",
+  never "the plan is". Version 1 is told in the past ("my first version used an ESP8266...").
+- Simple everyday English. One idea per sentence. Short sentences (about 15-20 words).
+- Every technical word gets a one-line plain explanation the FIRST time it appears in a chapter
+  (e.g. "softmax, which turns scores into chances that add up to 1"). Assume a beginner in everything.
+- Give the intuition, the why, and the how, woven into normal text. Use a small analogy when an idea is new.
+- No fluff, no repetition, no motivational talk. Dense but readable.
+- Do not use em-dashes or en-dashes anywhere. Use commas or a new sentence.
+
+## HTML format (each chapter file is a FRAGMENT, no <html>, <head> or <body>)
+Each chapter:
+```html
+<section class="chapter" id="ch7">
+<h1><span class="num">7</span> The CNN, layer by layer</h1>
+<p class="small">Short version: ...one or two sentences...</p>
+<h2>...</h2>
+...
+</section>
+```
+Boxes (use them often, they are the heart of the book):
+```html
+<div class="box why"><div class="label">Why?</div><p>...</p></div>
+<div class="box tip"><div class="label">Interview tip</div><p>...</p></div>
+<div class="box careful"><div class="label">Be careful</div><p>...</p></div>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>...</p></div>
+<div class="box story"><div class="label">Design story</div><p>...</p></div>
+```
+- Tables: plain <table><thead><tr><th>..</th></tr></thead><tbody>..</tbody></table>.
+- Code: <pre><code>...</code></pre>. Escape &lt; &gt; &amp; inside code.
+- Figures: inline SVG, width 700, simple boxes/arrows/text, colours #0f7c8c (teal), #d9822b (orange),
+  #5b7083 (grey), #1c2b33 (text), fill #e9f3f6 for boxes. Wrap in <figure> with
+  <figcaption>Figure N.M. ...</figcaption> (N = chapter number). SVG text: font-family "DejaVu Sans",
+  font-size 13. Self-contained SVG only (no external refs, no scripts). Draw every figure the brief lists.
+- Headings: one h1 per chapter. h2 for sections, h3 for sub-sections. The assembler builds the contents
+  page from h1 and h2, so make h2 titles meaningful.
+- No images from the internet. No JavaScript. No external CSS.
+
+## The "measured value" rule
+Numbers that only a real run or a real test can give (dataset counts, accuracy, confusion pairs, training
+time, prediction time on the Pi, calibration numbers, scale error, filter settle time) are given as the
+predicted values from the NUMBERS SHEET below, inside a "measure" box, worded as "In my run the test
+accuracy was 92.6% (262 of 283)". The box label already says "predicted, replace after your test".
+Design numbers (image size, layer sizes, pins, thresholds, window sizes) are facts and need no box.
+
+## NUMBERS SHEET (canonical: every chapter and every code file must use exactly these)
+
+### Hardware
+- Computer: Raspberry Pi 4 Model B, 4 GB RAM, Raspberry Pi OS Bookworm 64-bit, Python 3.11.
+- Camera: Logitech C270 USB webcam, 640 x 480, mounted 35 cm above the tray, looking straight down.
+- Light: a small LED strip under the camera so every photo has the same light.
+- Load cell: 5 kg bar-type load cell (4 wires: red E+, black E-, white A-, green A+).
+- HX711 board (green), RATE pin left as shipped = 10 readings per second, gain 128 on channel A.
+- Touchscreen: official Raspberry Pi 7-inch touch display, 800 x 480, DSI ribbon, powered from the Pi's
+  5 V (pin 2) and GND (pin 6) with two jumper wires.
+- Power: official 5 V 3 A USB-C supply. Measured draw with screen and camera: about 1.1 A.
+- Frame: MDF box from version 1, blue plastic tray resting only on the load cell.
+- Version 1 parts no longer used: ESP8266 NodeMCU, the laptop.
+
+### Raspberry Pi 4 wiring (40-pin header, physical pin numbers)
+- HX711 VCC -> 3V3 (pin 1).  HX711 GND -> GND (pin 6).
+- HX711 DT  -> GPIO 5 (pin 29).  HX711 SCK -> GPIO 6 (pin 31).
+- Screen 5 V -> pin 2, screen GND -> pin 6 (or pin 9). Camera -> any USB port.
+- Never 5 V into a GPIO. The HX711 is powered from 3.3 V so its DT pin never exceeds 3.3 V.
+Full 40-pin header (physical pin: function), odd pins on the inside row, even pins on the outside row:
+1 3V3, 2 5V, 3 GPIO2 (SDA), 4 5V, 5 GPIO3 (SCL), 6 GND, 7 GPIO4, 8 GPIO14 (TXD), 9 GND, 10 GPIO15 (RXD),
+11 GPIO17, 12 GPIO18 (PWM), 13 GPIO27, 14 GND, 15 GPIO22, 16 GPIO23, 17 3V3, 18 GPIO24, 19 GPIO10 (MOSI),
+20 GND, 21 GPIO9 (MISO), 22 GPIO25, 23 GPIO11 (SCLK), 24 GPIO8 (CE0), 25 GND, 26 GPIO7 (CE1),
+27 ID_SD (reserved), 28 ID_SC (reserved), 29 GPIO5, 30 GND, 31 GPIO6, 32 GPIO12 (PWM), 33 GPIO13 (PWM),
+34 GND, 35 GPIO19, 36 GPIO16, 37 GPIO26, 38 GPIO20, 39 GND, 40 GPIO21.
+Pi facts: all GPIO are 3.3 V; about 16 mA per pin, 50 mA total safe; no analog input at all (that is why
+the HX711 exists); pins 27 and 28 are reserved for HAT ID EEPROM, do not use; Linux is not a real-time
+system, so pin timing can pause for milliseconds at any moment.
+
+### Software stack
+- Laptop (training): Python 3.11, numpy, opencv-python, matplotlib. CPU only (Intel i5 laptop).
+- Pi (kiosk): python3, python3-numpy, python3-opencv (apt), python3-tk, rpi-lgpio (gives the RPi.GPIO API
+  on Bookworm). No PyTorch, no TensorFlow anywhere in version 2.
+- Repository layout:
+  README.md
+  classifier/  cnn_numpy.py  prepare_dataset.py  train.py  gradient_check.py  weights.npz  metrics.json
+  kiosk/       hx711.py  weight_filter.py  calibrate.py  camera.py  bill.py  kiosk_app.py  prices.csv  config.json
+  docs/        book/  photos/  wiring.md
+  v1/          the old YOLOv5 + ESP8266 + Tkinter code, kept for the design story
+
+### Dataset (predicted, replace after your real run)
+- Source photos: 636 top-view photos of 14 items from version 1, each with YOLO label files (class, box).
+- Version 2 makes a CLASSIFICATION set by cropping every labelled box out of every photo, padding to a
+  square, resizing to 64 x 64. Predicted crops: 1,850 after dropping two classes.
+- The two dropped classes: Capsicum (15 photos) and Chilly (17 photos), too few photos to learn from.
+  That leaves 12 classes, in this fixed order (class index 0..11):
+  0 Apple, 1 Beetroot, 2 Brinjal, 3 Brinjal White, 4 Coconut, 5 Guava, 6 Lemon, 7 Mosambi, 8 Onion,
+  9 Pomegranate, 10 Potato, 11 Tomato.
+- Predicted crops per class: Apple 230, Beetroot 150, Brinjal 280, Brinjal White 100, Coconut 120,
+  Guava 95, Lemon 160, Mosambi 170, Onion 140, Pomegranate 80, Potato 170, Tomato 155 (total 1,850).
+- Split BY PHOTO (all crops of one photo go to the same pile), 70 / 15 / 15:
+  train 1,290 crops, validation 277, test 283.
+- Preparation (identical at training and at the kiosk): crop -> pad to square with the border colour ->
+  BGR to RGB -> resize 64 x 64 with INTER_AREA -> float32 / 255 -> shape (1, 3, 64, 64).
+
+### The CNN (design facts)
+Input 3 x 64 x 64
+Conv1  8 filters 3x3, no padding, stride 1 -> 8 x 62 x 62, ReLU         weights 8*27+8   = 224
+MaxPool 2x2 -> 8 x 31 x 31
+Conv2  16 filters 3x3 -> 16 x 29 x 29, ReLU                              weights 16*72+16 = 1,168
+MaxPool 2x2 -> 16 x 14 x 14
+Conv3  32 filters 3x3 -> 32 x 12 x 12, ReLU                              weights 32*144+32 = 4,640
+MaxPool 2x2 -> 32 x 6 x 6
+Flatten -> 1,152
+Dense1 1,152 -> 64, ReLU                                                 weights 1152*64+64 = 73,792
+Dense2 64 -> 12, softmax                                                 weights 64*12+12 = 780
+Total weights 80,604. Multiplications per photo: conv1 830,304 + conv2 968,832 + conv3 663,552 +
+dense 73,728 + 768 = about 2.5 million.
+- He initialisation, float32, cross-entropy loss, SGD with momentum 0.9, learning rate 0.01, batch 32,
+  40 epochs, shuffle every epoch, keep the weights of the best validation epoch.
+- Augmentation on training crops only: random horizontal flip, random shift up to 4 pixels,
+  brightness scale 0.85 to 1.15.
+- Convolution implemented by looping over the 9 filter cells and using np.einsum over all images and
+  positions at once (no Python loop over pixels). Backward pass written by hand for every layer.
+- Gradient check: central difference with eps 1e-5 in float64 on 20 random weights per layer.
+- Function and class names used everywhere: Conv, ReLU, MaxPool, Flatten, Dense, Net, softmax(z),
+  loss_and_grad(scores, y), prepare_image(bgr) -> (1,3,64,64), load_weights(path), save_weights(path),
+  predict(net, x) -> (class_index, confidence), class names list CLASSES.
+
+### Training results (predicted, replace after your real run)
+- Gradient check: biggest relative difference 3e-7 (float64).
+- Training on the laptop CPU: about 45 s per epoch, 30 minutes for 40 epochs.
+- Best validation epoch: 34. Training accuracy 98.1%, validation 93.5%, test 92.6% (262 of 283 correct).
+- Chance level 1/12 = 8.3%.
+- Confusion matrix: 21 test mistakes in total. Most confused pair Mosambi <-> Lemon (7 mistakes, both
+  round and green-yellow), Brinjal <-> Brinjal White (4), Onion <-> Potato (3), Guava <-> Mosambi (2),
+  the rest scattered one each. Best classes: Tomato, Coconut, Pomegranate at 100%.
+- Per-class test accuracy (predicted): Apple 94, Beetroot 91, Brinjal 90, Brinjal White 86, Coconut 100,
+  Guava 87, Lemon 88, Mosambi 85, Onion 90, Pomegranate 100, Potato 93, Tomato 100 (percent).
+- Weights file weights.npz: 10 arrays, about 320 kB.
+- Prediction on the Pi 4: forward pass 18 ms per 64 x 64 photo in float32 NumPy; capture + prepare +
+  predict about 60 ms. On the laptop the forward pass is 4 ms.
+- First attempt without augmentation: train 99.6%, validation 84.2% (overfitting). Augmentation and the
+  smaller 64-unit dense layer brought validation to 93.5%.
+
+### HX711 and weighing (predicted, replace after your real test)
+- Calibration: empty tray raw 123,450 (the offset). With a known 500 g weight: 338,950.
+  counts_per_gram = (338,950 - 123,450) / 500 = 431.0. Saved in kiosk/config.json.
+  (Version 1 used a scale factor of 430 on the ESP8266, so this agrees.)
+- grams = (raw - offset) / counts_per_gram.
+- Filter: median of the newest 5 readings, then "steady" when the newest 8 cleaned readings differ by
+  less than 2 g; the weight used is their average. At 10 readings per second the first steady value
+  comes about 1.2 s after the item is put down.
+- Wild readings from the Linux timing trap (SCK high for over 60 microseconds resets the chip): about
+  one every 2 minutes in a test; every one removed by the median.
+- Scale error with 100 g, 500 g, 1 kg and 2 kg check weights: within 2 g everywhere, worst 2 g at 1 kg.
+- Zero drift: about 1 g per hour; the app re-tares when the tray has been empty and steady for 5 s.
+- Item present threshold: 20 g. Item removed threshold: below 10 g.
+- read_raw has a 1 s timeout and returns None if DT never goes low.
+
+### Price table kiosk/prices.csv (rupees per kg, from version 1)
+Apple 240, Beetroot 50, Brinjal 40, Brinjal White 40, Coconut 80, Guava 80, Lemon 90, Mosambi 140,
+Onion 25, Pomegranate 210, Potato 60, Tomato 35.
+Money is kept as whole paise: price_paise = round(grams * rupees_per_kg * 100 / 1000).
+Example: 412 g tomato = 1,442 paise = Rs 14.42.
+
+### The app (design facts)
+- Tkinter, fullscreen 800 x 480, big buttons, no typing. root.after(100, tick): the tick runs 10 times a
+  second, reads the HX711, updates the filter and the state, redraws the screen.
+- States: Waiting ("Place an item") -> Settling (live weight) -> Identifying (one photo, CNN) ->
+  Showing (name, grams, price, buttons "Add to bill" and "Wrong item") -> Remove ("Take the item off")
+  -> Waiting. "Wrong item" shows the top 3 guesses plus a full list. "Finish" shows the itemised bill
+  with lines "name, grams, Rs/kg, Rs" and the total, then a "New customer" button clears it.
+- Confidence rule: if the top chance is below 0.60 the screen says "Not sure, please choose" and shows
+  the top 3.
+- The CNN runs inside the tick; 60 ms is a short pause nobody notices.
+- Time from item placed to name on screen: about 1.5 s (1.2 s settling + 0.3 s photo and prediction).
+- Start-up: load weights (once) -> open camera -> set up GPIO -> read config.json -> tare (20 readings,
+  2 s) -> show the first screen -> start the tick.
