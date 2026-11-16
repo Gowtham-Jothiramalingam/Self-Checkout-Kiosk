@@ -38,6 +38,8 @@ FRAME, ../README.md, ../"Self-Checkout Kiosk.pdf") is the old project; read it f
   agree.
 
 ## Working method (single session, can take time)
+- The user switches the model between turns (see the model plan in 00_START_HERE.md). Each turn must
+  therefore end with the files saved and a one-line note of what is next, so the next model can continue.
 - Write one chapter group per turn. Save the file, then run a quick check (section ids present, no
   em-dashes, every <section> closed, figure count, word count) before moving on. If the session is
   interrupted, the next turn starts by listing book/ and continuing with the first missing file.

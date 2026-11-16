@@ -21,7 +21,35 @@ printed textbook for a beginner, finished-project voice, every "why" explained, 
 purple boxes. When all chapters exist, copy handoff/assemble.py and handoff/style.css into book/, run
 assemble.py, check the PDF, and give me the PDF, the README and the src folder.
 ---------------------------------------------------------------------------------------------------
-Then simply reply "continue" after each turn until the PDF arrives. Expect 8 to 12 turns.
+Then reply "continue" after each turn, choosing the model from the plan below. Expect about 8 turns.
+
+## Model plan: where to use Opus and where to use Fable
+The session stays the same; you only change the model selector before sending that turn's message.
+Context is kept, so switching is free. Opus is cheaper and uses less of your limit; Fable is stronger at
+the maths-heavy code and at catching mistakes. Use Fable only where it changes the result.
+
+| Turn | Message to send | Model | Why |
+|---|---|---|---|
+| 1 | the Step 2 message (reads the kit, writes ch01-05) | Opus | plain explanatory chapters |
+| 2 | continue (ch06-09: images, CNN layers, learning, code explained) | Fable if your limit allows, else Opus | backprop explanations are the part interviewers probe |
+| 3 | continue (ch10-13: dataset, Pi inference, HX711, grams) | Opus | plain chapters |
+| 4 | continue (ch14-16: app, program, physical build) | Opus | plain chapters |
+| 5 | continue (ch17: write all code in book/src, run the smoke tests, embed) | Fable | the NumPy CNN backward pass and gradient check must be correct |
+| 6 | continue (ch18-21: build steps, problems, journey, interview Q&A, cheat sheet) | Opus | plain chapters |
+| 7 | continue (assemble the PDF, check it, fix rendering) | Opus | mechanical |
+| 8 | the review message below | Fable | one careful pass over the whole book and code |
+
+Review message for turn 8:
+---------------------------------------------------------------------------------------------------
+Review the whole book (book/*.html) and the code (book/src) against handoff/CONVENTIONS.md and
+handoff/KIOSK_BOOK_BRIEF.md. Fix: any number that disagrees with the numbers sheet; any explanation a
+beginner could not follow; any missing Why box the brief asked for; any em-dash; any code that would not
+run; any chapter that is clearly thinner than the others. Re-run the smoke tests, re-run assemble.py, and
+give me the final PDF with a short list of what you changed.
+---------------------------------------------------------------------------------------------------
+
+If a turn is cut off by a usage limit, wait for the reset and send "continue" on the same model. If Fable
+is unavailable on that account, run everything on Opus and ask for the review turn twice.
 
 ## Step 3. After you get the PDF
 Every purple "Measured value" box holds a predicted number. When you later make the dataset crops and
