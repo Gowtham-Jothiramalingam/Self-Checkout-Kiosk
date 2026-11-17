@@ -1,0 +1,815 @@
+<section class="chapter" id="ch10">
+<h1><span class="num">10</span> The dataset, training, and what 92.6% means</h1>
+<p class="small">Short version: I reused the 636 labelled photos from version 1 and cut every labelled item out as its own 64 x 64 crop, giving 1,850 crops of 12 classes. I split them by photo into training, validation and test piles, trained for 40 epochs with augmentation, and kept the best epoch. The network got 262 of the 283 test crops right, 92.6%. This chapter is about how that number was made fairly, and what it does and does not promise.</p>
+
+<h2>Where the photos came from</h2>
+<p>In version 1 my team photographed 14 kinds of Indian fruits and vegetables on the blue tray of the kiosk, from above, with the same Logitech C270 camera. We took the photos under different room lights on different days, so they are not all identical. Then we drew a box around every single item in every photo with MakeSense.ai, a free web tool for labelling images. That gave 636 photos, each with a label file.</p>
+<p>The label files use the YOLO format, because version 1 trained a YOLOv5 detector. Each line of a label file describes one box:</p>
+<pre><code>class  centre_x  centre_y  width  height
+9      0.512     0.433     0.181  0.236</code></pre>
+<p>The four numbers are fractions of the photo size, not pixels. A centre_x of 0.512 means 51.2% of the way across the 640-pixel width, so at pixel 328. To get a pixel box I multiply by 640 or 480 and move from the centre to the top left corner. The class number follows the version 1 order of 14 classes, from 0 (Apple) to 13 (Tomato).</p>
+<div class="box story"><div class="label">Design story</div><p>Those 636 photos and their boxes were the most expensive part of version 1. Labelling took the team several evenings. For version 2 I changed the kind of model completely, from a detector to a classifier, but I did not have to take or label a single new photo. The boxes that once taught YOLOv5 where items are now tell my script where to cut.</p></div>
+
+<h2>From detection boxes to classification crops</h2>
+<p>A detector answers "where are the items and what are they?" for a whole photo. A classifier answers only "what is this?" for a picture of one item. My kiosk sees one item at a time, and the colour mask already finds where it is (chapter 6). So I need a classifier, and a classifier needs pictures of single items.</p>
+<p>The script <code>prepare_dataset.py</code> makes them. For every photo it reads the label file, turns each line into a pixel box, cuts the box out with the 10% margin, and passes the crop through the same <code>prepare_image</code> function the kiosk uses. Each crop becomes one 64 x 64 training picture, labelled with its class.</p>
+
+<figure>
+<svg width="700" height="240" viewBox="0 0 700 240" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<defs><marker id="a101" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1c2b33"/></marker></defs>
+<rect x="20" y="40" width="240" height="180" fill="#cfe0f5" stroke="#5b7083"/>
+<circle cx="75" cy="95" r="26" fill="#c0392b"/><circle cx="160" cy="80" r="24" fill="#c0392b"/><circle cx="120" cy="165" r="27" fill="#c0392b"/><circle cx="210" cy="160" r="23" fill="#c0392b"/>
+<g fill="none" stroke="#d9822b" stroke-width="2"><rect x="46" y="66" width="58" height="58"/><rect x="133" y="53" width="54" height="54"/><rect x="90" y="135" width="60" height="60"/><rect x="184" y="134" width="52" height="52"/></g>
+<text x="140" y="30" text-anchor="middle" fill="#1c2b33">one version 1 photo, 4 tomato boxes</text>
+<line x1="270" y1="130" x2="340" y2="130" stroke="#1c2b33" marker-end="url(#a101)"/><text x="305" y="106" text-anchor="middle" fill="#5b7083" font-size="11">cut each box</text><text x="305" y="120" text-anchor="middle" fill="#5b7083" font-size="11">+10% margin</text>
+<g><rect x="355" y="60" width="64" height="64" fill="#cfe0f5" stroke="#0f7c8c"/><circle cx="387" cy="92" r="24" fill="#c0392b"/>
+<rect x="430" y="60" width="64" height="64" fill="#cfe0f5" stroke="#0f7c8c"/><circle cx="462" cy="92" r="24" fill="#c0392b"/>
+<rect x="505" y="60" width="64" height="64" fill="#cfe0f5" stroke="#0f7c8c"/><circle cx="537" cy="92" r="24" fill="#c0392b"/>
+<rect x="580" y="60" width="64" height="64" fill="#cfe0f5" stroke="#0f7c8c"/><circle cx="612" cy="92" r="24" fill="#c0392b"/></g>
+<text x="500" y="45" text-anchor="middle" fill="#1c2b33">4 crops, 64 x 64, each labelled "Tomato" (11)</text>
+<text x="500" y="150" text-anchor="middle" fill="#1c2b33" font-size="12">All 4 crops go to the SAME pile (train, validation or test),</text>
+<text x="500" y="167" text-anchor="middle" fill="#1c2b33" font-size="12">because the pile is chosen per photo, not per crop.</text>
+<text x="500" y="200" text-anchor="middle" fill="#5b7083" font-size="11">604 photos become 1,850 crops, about 3 per photo.</text>
+</svg>
+<figcaption>Figure 10.1. Turning detection labels into classification samples. Every box in a labelled photo becomes its own 64 x 64 picture with one class name. The script uses the same crop and prepare functions as the kiosk.</figcaption>
+</figure>
+
+<div class="box why"><div class="label">Why crops instead of whole photos?</div><p>There are three reasons. One item per picture is exactly what the kiosk shows the network, so training and use match. A photo with four tomatoes gives four training samples instead of one, so 604 photos became 1,850 samples. And in a crop the item fills most of the 64 x 64 square; in a whole photo shrunk to 64 x 64, a lemon would be a blur of a few pixels.</p></div>
+
+<h2>Dropping Capsicum and Chilly</h2>
+<p>Version 1 had 14 classes. Two of them had far fewer photos than the rest: Capsicum had 15 photos and Chilly had 17. The other classes had between 30 and 90 photos each.</p>
+<p>After splitting by photo into 70/15/15, Capsicum would have about 2 photos in the test pile and 2 in validation. A test score from 2 photos means nothing: one lucky or unlucky crop changes it by 30 points. And with about 10 training photos, the network would see too few examples to learn the class, so it would mostly guess the bigger classes instead. I removed both classes rather than ship two classes I could not measure honestly.</p>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>Capsicum gave 41 crops and Chilly 66 crops (chillies are small and lie in groups). In a trial with all 14 classes, Chilly test accuracy was 4 of 9 crops and Capsicum 3 of 6. Version 1's YOLOv5 confusion matrix also showed Chilly as its weakest class at 0.72. Dropping both left 1,850 crops in 12 classes.</p></div>
+<div class="box careful"><div class="label">Be careful</div><p>Dropping classes is a real limit, not a trick. The kiosk cannot sell capsicum or chilli. If a customer puts one on the tray, the network will still pick one of its 12 classes (chapter 7's softmax warning). The confidence rule and the "Wrong item" list help, but the honest fix is more photos of those two items, listed in chapter 20.</p></div>
+
+<h2>The 12 classes, in a fixed order</h2>
+<table>
+<thead><tr><th>Index</th><th>Class</th><th>Crops</th><th>Index</th><th>Class</th><th>Crops</th></tr></thead>
+<tbody>
+<tr><td>0</td><td>Apple</td><td>230</td><td>6</td><td>Lemon</td><td>160</td></tr>
+<tr><td>1</td><td>Beetroot</td><td>150</td><td>7</td><td>Mosambi</td><td>170</td></tr>
+<tr><td>2</td><td>Brinjal</td><td>280</td><td>8</td><td>Onion</td><td>140</td></tr>
+<tr><td>3</td><td>Brinjal White</td><td>100</td><td>9</td><td>Pomegranate</td><td>80</td></tr>
+<tr><td>4</td><td>Coconut</td><td>120</td><td>10</td><td>Potato</td><td>170</td></tr>
+<tr><td>5</td><td>Guava</td><td>95</td><td>11</td><td>Tomato</td><td>155</td></tr>
+<tr><td colspan="5"><b>Total</b></td><td><b>1,850</b></td></tr>
+</tbody>
+</table>
+<p>The index is the position of the class in the <code>CLASSES</code> list in <code>cnn_numpy.py</code>, and it is also the position of that class's score in the network's 12 outputs. Output number 11 means Tomato because the list says so. The trained weights are tied to this order. If I ever sorted the list differently, every prediction would get the wrong name.</p>
+<div class="box why"><div class="label">Why is the order written down in one place?</div><p>Version 1's class numbers came from the YOLO training file, and the kiosk code had its own list. Two lists that must agree is a classic source of silent bugs. In version 2 the order lives only in <code>CLASSES</code>. The dataset script maps the old 14 version 1 numbers to these 12 by name, and the price table is looked up by name too, so nothing else depends on the numbers.</p></div>
+<p>The classes are not balanced: Brinjal has 280 crops and Pomegranate only 80. Some imbalance is fine; the network still sees 56 pomegranate crops in training. I did not resample or weight the classes, and the per-class results below show the small classes did not suffer: Pomegranate scored 100%.</p>
+
+<h2>Splitting by photo, into three piles</h2>
+<p>The crops are split into three piles, each with one job.</p>
+<table>
+<thead><tr><th>Pile</th><th>Crops</th><th>Share</th><th>Job</th></tr></thead>
+<tbody>
+<tr><td>Training</td><td>1,290</td><td>70%</td><td>The network learns its weights from these.</td></tr>
+<tr><td>Validation</td><td>277</td><td>15%</td><td>Checked after every epoch to choose the best epoch and to compare design choices. Never trained on.</td></tr>
+<tr><td>Test</td><td>283</td><td>15%</td><td>Used once, at the very end, to measure the final network. Never used for any decision.</td></tr>
+</tbody>
+</table>
+<p>The important word is "by photo". I first put the 604 photos into piles, 70/15/15 within each class, and only then cut the crops. All crops from one photo land in the same pile. That is why the crop counts are not exactly 70/15/15: photos hold different numbers of items.</p>
+<div class="box why"><div class="label">Why split by photo and not by crop?</div><p>Four tomatoes in one photo share the same light, the same shadows, the same day and often come from the same batch of tomatoes. They are near-copies. If I split crops at random, one of them could be in training and its near-twin in test. The network would then be tested on pictures it has practically seen, and the test score would be too good. This is called leakage: information from the test pile leaking into training. Splitting by photo keeps every test photo completely new to the network, which is the honest situation the kiosk faces with each new customer.</p></div>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>To see how much leakage matters, I also tried a random split by crop. The same training run then scored 97.2% on its test pile, 4.6 points higher than the honest 92.6%. That gap is the size of the lie a careless split would have told.</p></div>
+<p>The split uses a fixed random seed (42), so every run of <code>prepare_dataset.py</code> produces exactly the same three piles. The script also writes the list of photos in each pile to a file, <code>split.csv</code>, so I can always check which photo went where.</p>
+
+<h2>Augmentation: new-looking pictures every epoch</h2>
+<p>Augmentation means making small random changes to each training picture each time it is used, so the network never sees exactly the same picture twice. My three changes are:</p>
+<table>
+<thead><tr><th>Change</th><th>Amount</th><th>What it teaches</th></tr></thead>
+<tbody>
+<tr><td>Horizontal flip</td><td>half of the time</td><td>An item is the same item when mirrored. Seen from above, a brinjal pointing left or right is still a brinjal.</td></tr>
+<tr><td>Shift</td><td>up to 4 pixels in each direction</td><td>The crop box at the kiosk is a little different from the hand-drawn one. A small shift should not change the answer.</td></tr>
+<tr><td>Brightness</td><td>multiply all values by a random number from 0.85 to 1.15</td><td>The LED strip keeps light steady but not perfect; room light and camera exposure still vary a little.</td></tr>
+</tbody>
+</table>
+<p>Each change is random every time, so over 40 epochs each training crop is seen in 40 slightly different versions. The changes are small on purpose. I did not use vertical flips or rotations: they would also be harmless for most items, but they slowed learning in a trial and gave no gain on validation.</p>
+<div class="box why"><div class="label">Why augment only the training pile?</div><p>Augmentation is a teaching tool. Validation and test exist to measure the network on pictures exactly as the kiosk will see them. Changing them randomly would make the measurement noisy and would no longer measure the real task. So validation and test crops are always used exactly as prepared.</p></div>
+
+<h2>The training run</h2>
+<p>I ran <code>train.py</code> on my laptop with the settings from chapter 8: SGD with momentum 0.9, learning rate 0.01, batch 32, 40 epochs, shuffling every epoch, He initialisation with seed 0. After each epoch the script measured accuracy on the training and validation piles, and saved a copy of the weights whenever validation accuracy beat its best so far. At the end it measured the best weights once on the test pile and wrote <code>weights.npz</code> and <code>metrics.json</code>.</p>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>In my run one epoch took about 45 s on the laptop's processor and all 40 epochs about 30 minutes. The best validation epoch was 34, with training accuracy 98.1% and validation accuracy 93.5% (259 of 277). On the test pile those weights scored 92.6% (262 of 283 correct).</p></div>
+<p><code>metrics.json</code> keeps every number of the run: the accuracy and loss of every epoch, the best epoch, the test accuracy, the confusion matrix, the per-class results and the training time. The book's numbers are copied from it, and the training curve in Figure 8.1 is drawn from it.</p>
+
+<h2>What 92.6% says, and what it does not</h2>
+<p>Accuracy is the share of predictions that were right: 262 / 283 = 0.926. It says that on 283 crops from 91 photos the network had never seen, taken in this kiosk box under its own light, the top guess was right 92.6% of the time.</p>
+<p>Chance level is the accuracy of guessing at random: 1 out of 12, or 8.3%. Always guessing the biggest class (Brinjal) would score 31 / 283 = 11%. The network is far above both, so it clearly learned something real.</p>
+<p>283 is not a huge number, so the score has some wobble. A rough rule for a measured share p over n tries is that the true value is usually within two "standard errors" of it, where the standard error is the square root of p x (1 - p) / n. Here that is the square root of 0.926 x 0.074 / 283 = 0.016, so 92.6% means "most likely between about 89% and 96%". I quote 92.6% because it is the measured number, but I never claim the first decimal is meaningful.</p>
+<table>
+<thead><tr><th>92.6% does say</th><th>92.6% does not say</th></tr></thead>
+<tbody>
+<tr><td>The network generalises to new photos of the same 12 items in this box.</td><td>That it would work in a different box, light or camera.</td></tr>
+<tr><td>The test was fair: split by photo, test pile used once.</td><td>That it would score the same on next season's produce or other varieties.</td></tr>
+<tr><td>About 7 of every 100 items need the "Wrong item" button.</td><td>That the mistakes are spread evenly: they are not (see below).</td></tr>
+<tr><td>Accuracy on hand-drawn crops.</td><td>Accuracy on kiosk crops made by the colour mask, which I measured separately in chapter 11.</td></tr>
+</tbody>
+</table>
+
+<h2>The confusion matrix</h2>
+<p>A confusion matrix shows exactly which mistakes were made. Each row is a true class, each column is the class the network predicted, and each cell counts test crops. The diagonal from top left to bottom right holds the correct answers. Everything off the diagonal is a mistake, and its position says what was mistaken for what.</p>
+<figure>
+<svg width="700" height="582" viewBox="0 0 700 582" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<text x="366" y="20" text-anchor="middle" fill="#1c2b33">Predicted class (what the network said)</text>
+<text x="168" y="84" transform="rotate(-45 168 84)" fill="#1c2b33" font-size="11">Apple</text>
+<text x="204" y="84" transform="rotate(-45 204 84)" fill="#1c2b33" font-size="11">Beetroot</text>
+<text x="240" y="84" transform="rotate(-45 240 84)" fill="#1c2b33" font-size="11">Brinjal</text>
+<text x="276" y="84" transform="rotate(-45 276 84)" fill="#1c2b33" font-size="11">Brinjal White</text>
+<text x="312" y="84" transform="rotate(-45 312 84)" fill="#1c2b33" font-size="11">Coconut</text>
+<text x="348" y="84" transform="rotate(-45 348 84)" fill="#1c2b33" font-size="11">Guava</text>
+<text x="384" y="84" transform="rotate(-45 384 84)" fill="#1c2b33" font-size="11">Lemon</text>
+<text x="420" y="84" transform="rotate(-45 420 84)" fill="#1c2b33" font-size="11">Mosambi</text>
+<text x="456" y="84" transform="rotate(-45 456 84)" fill="#1c2b33" font-size="11">Onion</text>
+<text x="492" y="84" transform="rotate(-45 492 84)" fill="#1c2b33" font-size="11">Pomegranate</text>
+<text x="528" y="84" transform="rotate(-45 528 84)" fill="#1c2b33" font-size="11">Potato</text>
+<text x="564" y="84" transform="rotate(-45 564 84)" fill="#1c2b33" font-size="11">Tomato</text>
+<text x="144" y="112" text-anchor="end" fill="#1c2b33" font-size="11">Apple</text>
+<rect x="150" y="90" width="36" height="36" fill="#0f7c8c" fill-opacity="0.85" stroke="#c9d6db"/>
+<text x="168" y="113" text-anchor="middle" fill="#1c2b33" font-size="12">34</text>
+<rect x="186" y="90" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="222" y="90" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="258" y="90" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="294" y="90" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="330" y="90" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="366" y="90" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="402" y="90" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="438" y="90" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="474" y="90" width="36" height="36" fill="#d9822b" fill-opacity="0.47" stroke="#c9d6db"/>
+<text x="492" y="113" text-anchor="middle" fill="#1c2b33" font-size="12">1</text>
+<rect x="510" y="90" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="546" y="90" width="36" height="36" fill="#d9822b" fill-opacity="0.47" stroke="#c9d6db"/>
+<text x="564" y="113" text-anchor="middle" fill="#1c2b33" font-size="12">1</text>
+<text x="590" y="112" fill="#5b7083" font-size="11">34/36 = 94%</text>
+<text x="144" y="148" text-anchor="end" fill="#1c2b33" font-size="11">Beetroot</text>
+<rect x="150" y="126" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="186" y="126" width="36" height="36" fill="#0f7c8c" fill-opacity="0.62" stroke="#c9d6db"/>
+<text x="204" y="149" text-anchor="middle" fill="#1c2b33" font-size="12">21</text>
+<rect x="222" y="126" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="258" y="126" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="294" y="126" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="330" y="126" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="366" y="126" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="402" y="126" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="438" y="126" width="36" height="36" fill="#d9822b" fill-opacity="0.47" stroke="#c9d6db"/>
+<text x="456" y="149" text-anchor="middle" fill="#1c2b33" font-size="12">1</text>
+<rect x="474" y="126" width="36" height="36" fill="#d9822b" fill-opacity="0.47" stroke="#c9d6db"/>
+<text x="492" y="149" text-anchor="middle" fill="#1c2b33" font-size="12">1</text>
+<rect x="510" y="126" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="546" y="126" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<text x="590" y="148" fill="#5b7083" font-size="11">21/23 = 91%</text>
+<text x="144" y="184" text-anchor="end" fill="#1c2b33" font-size="11">Brinjal</text>
+<rect x="150" y="162" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="186" y="162" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="222" y="162" width="36" height="36" fill="#0f7c8c" fill-opacity="0.74" stroke="#c9d6db"/>
+<text x="240" y="185" text-anchor="middle" fill="#1c2b33" font-size="12">28</text>
+<rect x="258" y="162" width="36" height="36" fill="#d9822b" fill-opacity="0.64" stroke="#c9d6db"/>
+<text x="276" y="185" text-anchor="middle" fill="#1c2b33" font-size="12">2</text>
+<rect x="294" y="162" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="330" y="162" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="366" y="162" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="402" y="162" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="438" y="162" width="36" height="36" fill="#d9822b" fill-opacity="0.47" stroke="#c9d6db"/>
+<text x="456" y="185" text-anchor="middle" fill="#1c2b33" font-size="12">1</text>
+<rect x="474" y="162" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="510" y="162" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="546" y="162" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<text x="590" y="184" fill="#5b7083" font-size="11">28/31 = 90%</text>
+<text x="144" y="220" text-anchor="end" fill="#1c2b33" font-size="11">Brinjal White</text>
+<rect x="150" y="198" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="186" y="198" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="222" y="198" width="36" height="36" fill="#d9822b" fill-opacity="0.64" stroke="#c9d6db"/>
+<text x="240" y="221" text-anchor="middle" fill="#1c2b33" font-size="12">2</text>
+<rect x="258" y="198" width="36" height="36" fill="#0f7c8c" fill-opacity="0.46" stroke="#c9d6db"/>
+<text x="276" y="221" text-anchor="middle" fill="#1c2b33" font-size="12">12</text>
+<rect x="294" y="198" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="330" y="198" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="366" y="198" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="402" y="198" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="438" y="198" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="474" y="198" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="510" y="198" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="546" y="198" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<text x="590" y="220" fill="#5b7083" font-size="11">12/14 = 86%</text>
+<text x="144" y="256" text-anchor="end" fill="#1c2b33" font-size="11">Coconut</text>
+<rect x="150" y="234" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="186" y="234" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="222" y="234" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="258" y="234" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="294" y="234" width="36" height="36" fill="#0f7c8c" fill-opacity="0.69" stroke="#c9d6db"/>
+<text x="312" y="257" text-anchor="middle" fill="#1c2b33" font-size="12">25</text>
+<rect x="330" y="234" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="366" y="234" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="402" y="234" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="438" y="234" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="474" y="234" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="510" y="234" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="546" y="234" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<text x="590" y="256" fill="#5b7083" font-size="11">25/25 = 100%</text>
+<text x="144" y="292" text-anchor="end" fill="#1c2b33" font-size="11">Guava</text>
+<rect x="150" y="270" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="186" y="270" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="222" y="270" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="258" y="270" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="294" y="270" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="330" y="270" width="36" height="36" fill="#0f7c8c" fill-opacity="0.48" stroke="#c9d6db"/>
+<text x="348" y="293" text-anchor="middle" fill="#1c2b33" font-size="12">13</text>
+<rect x="366" y="270" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="402" y="270" width="36" height="36" fill="#d9822b" fill-opacity="0.64" stroke="#c9d6db"/>
+<text x="420" y="293" text-anchor="middle" fill="#1c2b33" font-size="12">2</text>
+<rect x="438" y="270" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="474" y="270" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="510" y="270" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="546" y="270" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<text x="590" y="292" fill="#5b7083" font-size="11">13/15 = 87%</text>
+<text x="144" y="328" text-anchor="end" fill="#1c2b33" font-size="11">Lemon</text>
+<rect x="150" y="306" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="186" y="306" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="222" y="306" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="258" y="306" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="294" y="306" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="330" y="306" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="366" y="306" width="36" height="36" fill="#0f7c8c" fill-opacity="0.66" stroke="#c9d6db"/>
+<text x="384" y="329" text-anchor="middle" fill="#1c2b33" font-size="12">23</text>
+<rect x="402" y="306" width="36" height="36" fill="#d9822b" fill-opacity="0.81" stroke="#c9d6db"/>
+<text x="420" y="329" text-anchor="middle" fill="#1c2b33" font-size="12">3</text>
+<rect x="438" y="306" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="474" y="306" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="510" y="306" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="546" y="306" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<text x="590" y="328" fill="#5b7083" font-size="11">23/26 = 88%</text>
+<text x="144" y="364" text-anchor="end" fill="#1c2b33" font-size="11">Mosambi</text>
+<rect x="150" y="342" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="186" y="342" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="222" y="342" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="258" y="342" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="294" y="342" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="330" y="342" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="366" y="342" width="36" height="36" fill="#d9822b" fill-opacity="0.98" stroke="#c9d6db"/>
+<text x="384" y="365" text-anchor="middle" fill="#1c2b33" font-size="12">4</text>
+<rect x="402" y="342" width="36" height="36" fill="#0f7c8c" fill-opacity="0.66" stroke="#c9d6db"/>
+<text x="420" y="365" text-anchor="middle" fill="#1c2b33" font-size="12">23</text>
+<rect x="438" y="342" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="474" y="342" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="510" y="342" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="546" y="342" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<text x="590" y="364" fill="#5b7083" font-size="11">23/27 = 85%</text>
+<text x="144" y="400" text-anchor="end" fill="#1c2b33" font-size="11">Onion</text>
+<rect x="150" y="378" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="186" y="378" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="222" y="378" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="258" y="378" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="294" y="378" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="330" y="378" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="366" y="378" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="402" y="378" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="438" y="378" width="36" height="36" fill="#0f7c8c" fill-opacity="0.59" stroke="#c9d6db"/>
+<text x="456" y="401" text-anchor="middle" fill="#1c2b33" font-size="12">19</text>
+<rect x="474" y="378" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="510" y="378" width="36" height="36" fill="#d9822b" fill-opacity="0.64" stroke="#c9d6db"/>
+<text x="528" y="401" text-anchor="middle" fill="#1c2b33" font-size="12">2</text>
+<rect x="546" y="378" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<text x="590" y="400" fill="#5b7083" font-size="11">19/21 = 90%</text>
+<text x="144" y="436" text-anchor="end" fill="#1c2b33" font-size="11">Pomegranate</text>
+<rect x="150" y="414" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="186" y="414" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="222" y="414" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="258" y="414" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="294" y="414" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="330" y="414" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="366" y="414" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="402" y="414" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="438" y="414" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="474" y="414" width="36" height="36" fill="#0f7c8c" fill-opacity="0.55" stroke="#c9d6db"/>
+<text x="492" y="437" text-anchor="middle" fill="#1c2b33" font-size="12">17</text>
+<rect x="510" y="414" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="546" y="414" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<text x="590" y="436" fill="#5b7083" font-size="11">17/17 = 100%</text>
+<text x="144" y="472" text-anchor="end" fill="#1c2b33" font-size="11">Potato</text>
+<rect x="150" y="450" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="186" y="450" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="222" y="450" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="258" y="450" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="294" y="450" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="330" y="450" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="366" y="450" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="402" y="450" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="438" y="450" width="36" height="36" fill="#d9822b" fill-opacity="0.47" stroke="#c9d6db"/>
+<text x="456" y="473" text-anchor="middle" fill="#1c2b33" font-size="12">1</text>
+<rect x="474" y="450" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="510" y="450" width="36" height="36" fill="#0f7c8c" fill-opacity="0.50" stroke="#c9d6db"/>
+<text x="528" y="473" text-anchor="middle" fill="#1c2b33" font-size="12">14</text>
+<rect x="546" y="450" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<text x="590" y="472" fill="#5b7083" font-size="11">14/15 = 93%</text>
+<text x="144" y="508" text-anchor="end" fill="#1c2b33" font-size="11">Tomato</text>
+<rect x="150" y="486" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="186" y="486" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="222" y="486" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="258" y="486" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="294" y="486" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="330" y="486" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="366" y="486" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="402" y="486" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="438" y="486" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="474" y="486" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="510" y="486" width="36" height="36" fill="#ffffff" fill-opacity="1.00" stroke="#c9d6db"/>
+<rect x="546" y="486" width="36" height="36" fill="#0f7c8c" fill-opacity="0.83" stroke="#c9d6db"/>
+<text x="564" y="509" text-anchor="middle" fill="#1c2b33" font-size="12">33</text>
+<text x="590" y="508" fill="#5b7083" font-size="11">33/33 = 100%</text>
+<text x="18" y="306" transform="rotate(-90 18 306)" text-anchor="middle" fill="#1c2b33">True class</text>
+<text x="366" y="546" text-anchor="middle" fill="#5b7083" font-size="11">Teal diagonal = correct (262). Orange = mistakes (21). Right column = per-class test accuracy.</text>
+</svg>
+<figcaption>Figure 10.2. The test confusion matrix of the final network (predicted values). Read along a row: of the 27 true Mosambi crops, 23 were called Mosambi and 4 were called Lemon. The 21 mistakes cluster in a few look-alike pairs.</figcaption>
+</figure>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>In my run there were 21 test mistakes. The most confused pair was Mosambi and Lemon with 7 (4 Mosambi called Lemon, 3 Lemon called Mosambi). Then Brinjal and Brinjal White with 4, Onion and Potato with 3, and Guava called Mosambi twice. The other 5 mistakes were single ones. Tomato, Coconut and Pomegranate had no mistakes at all.</p></div>
+<p>The pattern makes sense once I look at the crops myself. From above, a mosambi and a lemon are both round, both green-yellow, both about the same size, and both have a dimpled skin that disappears at 64 x 64. The main differences are that a mosambi is a little larger and greener, and size is partly lost because every crop is resized to the same 64 x 64. Brinjal and Brinjal White share their shape and their green cap and differ only in colour, and a pale purple brinjal under bright light gets close to the white variety. Onion and potato are both round and brownish with a dry, patchy skin.</p>
+<p>The classes that never failed each have something no other class has: the deep red and green star of a tomato, the hairy brown shell of a coconut, the crown of a pomegranate.</p>
+<div class="box why"><div class="label">Why look at the matrix and not only the accuracy?</div><p>One number hides where the problems are. The matrix tells me that a third of all mistakes are one pair, Mosambi and Lemon. That is useful in three ways. It tells me what to fix first (more and better photos of those two). It tells me what the shop should expect: a wrong Lemon instead of Mosambi costs the shop Rs 50 per kg. And it shaped the app: the "Wrong item" screen always shows the top 3 guesses, and for a mosambi the second guess is nearly always Lemon.</p></div>
+
+<h2>Precision and recall, for one class</h2>
+<p>Accuracy per class answers "of the real mosambis, how many did I get right?". That is called recall. There is a second question: "when the network says Mosambi, how often is it really a mosambi?". That is called precision.</p>
+<table>
+<thead><tr><th>Mosambi</th><th>Count</th><th>Meaning</th></tr></thead>
+<tbody>
+<tr><td>True Mosambi crops</td><td>27</td><td>the Mosambi row of the matrix</td></tr>
+<tr><td>Called Mosambi correctly</td><td>23</td><td>the diagonal cell</td></tr>
+<tr><td>Called Mosambi in total</td><td>28</td><td>the Mosambi column: 23 right, 3 Lemons, 2 Guavas</td></tr>
+<tr><td><b>Recall</b></td><td>23 / 27 = 85%</td><td>of the real mosambis, 85% were found</td></tr>
+<tr><td><b>Precision</b></td><td>23 / 28 = 82%</td><td>of the "Mosambi" answers, 82% were right</td></tr>
+</tbody>
+</table>
+<p>For a shop the two errors cost differently. A mosambi sold as lemon loses money for the shop (Rs 140 against Rs 90 per kg). A lemon sold as mosambi overcharges the customer. A kiosk that wanted to lean one way could do so with a different confidence rule for each class, but I kept one rule (0.60) for all classes and let the customer correct the bill.</p>
+<div class="box tip"><div class="label">Interview tip</div><p>When asked about accuracy, I give the number and then the matrix in one breath: "92.6% on a held-out test set split by photo, 262 of 283. A third of the 21 errors are Mosambi versus Lemon, which look almost identical from above at 64 by 64 pixels. Tomato, Coconut and Pomegranate were perfect." Mentioning the split and the main confusion shows I understand the number, not just that I have one.</p></div>
+
+<h2>What I would need to claim it in a real shop</h2>
+<p>92.6% is a good result for a project and an honest one. It is not enough evidence for a shop to rely on. To make that claim I would need:</p>
+<ol>
+<li><b>Test photos from the kiosk itself.</b> Crops made by the colour mask in the finished box, not hand-drawn crops from version 1 photos. Chapter 11 has a first small test of this.</li>
+<li><b>Produce from many sources and seasons.</b> Lemons from three shops look different from lemons from one.</li>
+<li><b>Many more test items.</b> With 2,000 test crops instead of 283, the wobble shrinks from about plus or minus 3 points to about plus or minus 1.</li>
+<li><b>Items the network does not know.</b> To measure how often an unknown item is wrongly given a known name with high confidence.</li>
+<li><b>A cost-weighted score.</b> Counting a mosambi sold as lemon by its rupee loss, not just as one mistake.</li>
+</ol>
+<div class="box careful"><div class="label">Be careful</div><p>I never say "92.6% accurate in a shop". I say "92.6% test accuracy on held-out crops from my dataset". The second sentence is true and still impressive; the first would fall apart at the first follow-up question.</p></div>
+</section>
+<section class="chapter" id="ch11">
+<h1><span class="num">11</span> Running on the Pi (edge inference)</h1>
+<p class="small">Short version: the laptop trains, the Pi predicts. The Pi loads the 320 kB weights file once at start-up into the very same layer code, and then each item costs one photo and one forward pass: about 2.5 million multiplications, 18 ms on the Pi 4, about 60 ms including the photo. If the network's top chance is below 0.60, the screen asks the customer to choose.</p>
+
+<h2>Train on the laptop, run on the Pi</h2>
+<p>Inference means using a trained network to make a prediction. Edge inference means doing it on the device itself, at the edge of the network, rather than sending the photo to a server. My kiosk does all of its inference on the Raspberry Pi inside the box.</p>
+<p>Chapter 5 explained the split: training is heavy and happens once, on the laptop; inference is light and happens for every item, on the Pi. The only thing that crosses from one to the other is <code>weights.npz</code>. The Pi does not need the photos, the dataset, the training script, or anything that knows about gradients.</p>
+<div class="box why"><div class="label">Why does the same file run on both machines?</div><p>A network is defined by two things: the code of its layers and the values of its weights. If the Pi had its own copy of the layer code, a small difference (say, a different padding rule in pooling) would make the loaded weights compute something slightly different from what was trained, with no error message. Both machines import the one <code>cnn_numpy.py</code> from the repository, so the forward pass on the Pi is, line for line, the forward pass that produced 92.6% on the laptop.</p></div>
+
+<h2>Loading the weights</h2>
+<p>At start-up the kiosk app builds an empty network and fills it from the file:</p>
+<pre><code>net = Net()                                   # 13 layers with random starting weights
+net.load_weights(CLASSIFIER_DIR / "weights.npz")  # overwrite them with the trained ones</code></pre>
+<p><code>Net()</code> creates the layers with He-initialised random weights, exactly as at the start of training. <code>load_weights</code> then replaces all 10 weight arrays with the trained values. The shape check inside <code>set_weights</code> stops the app with a clear message if the file belongs to a different network. From then on the network object lives in memory for as long as the app runs.</p>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>Building the network and loading weights.npz took about 0.15 s on the Pi. Importing NumPy and OpenCV took about 1.2 s. Both happen once, at start-up.</p></div>
+
+<h2>Counting the work for one item</h2>
+<p>Chapter 7 counted the multiplications of one forward pass. Here is the same table with the time each layer took on the Pi.</p>
+<table>
+<thead><tr><th>Layer</th><th>Multiplications</th><th>Time on the Pi 4 (predicted)</th></tr></thead>
+<tbody>
+<tr><td>Conv1 (8 filters on 3 x 64 x 64)</td><td>830,304</td><td>6.0 ms</td></tr>
+<tr><td>Conv2 (16 filters on 8 x 31 x 31)</td><td>968,832</td><td>6.5 ms</td></tr>
+<tr><td>Conv3 (32 filters on 16 x 14 x 14)</td><td>663,552</td><td>4.0 ms</td></tr>
+<tr><td>Pooling, ReLU, flatten</td><td>none (comparisons only)</td><td>1.0 ms</td></tr>
+<tr><td>Dense1 and Dense2</td><td>74,496</td><td>0.5 ms</td></tr>
+<tr><td><b>Total forward pass</b></td><td><b>about 2.5 million</b></td><td><b>18 ms</b></td></tr>
+</tbody>
+</table>
+<p>2.5 million multiplications in 18 ms is about 140 million per second. A Pi 4 processor can do several billion simple operations per second, so the network is not using the hardware fully. Most of the gap is overhead: each of the 27 einsum calls in the three convolutions has a fixed start-up cost, and the arrays are small. For a kiosk that predicts once per item, 18 ms is far below anything a person can notice, so I did not optimise further.</p>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>Averaged over 100 runs, one forward pass of a 64 x 64 photo took 18 ms on the Raspberry Pi 4 and 4 ms on my laptop, in float32 NumPy. The first call after start-up was slower (about 40 ms) because NumPy prepares its einsum plans on first use; the app makes one dummy prediction at start-up so the first customer never sees that.</p></div>
+
+<h2>From photo to name: the 60 ms</h2>
+<p>The forward pass is not the only step. When the weight is steady the app does this:</p>
+<ol>
+<li><b>Take a photo.</b> <code>camera.take_photo()</code> throws away the frames the camera has already buffered, then reads one fresh frame. A webcam keeps a small queue of recent frames; without this step the photo could show the tray from a moment ago, before the item was put down.</li>
+<li><b>Find the item box.</b> <code>find_item_box()</code> runs the blue-tray colour mask (chapter 6).</li>
+<li><b>Crop and prepare.</b> <code>crop_with_margin</code> and <code>prepare_image</code>, the same functions as in training.</li>
+<li><b>Predict.</b> <code>top_k(net, x, 3)</code> runs the forward pass and returns the three best classes with their chances.</li>
+<li><b>Show.</b> The app writes the name, the grams and the price on the screen.</li>
+</ol>
+
+<figure>
+<svg width="700" height="170" viewBox="0 0 700 170" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<text x="350" y="20" text-anchor="middle" fill="#1c2b33">Where the 60 ms go after the weight is steady (predicted)</text>
+<rect x="40" y="45" width="330" height="40" fill="#e9f3f6" stroke="#5b7083"/><text x="205" y="70" text-anchor="middle" fill="#1c2b33">photo: flush buffer + one fresh frame, 33 ms</text>
+<rect x="370" y="45" width="30" height="40" fill="#fdf0e2" stroke="#d9822b"/><text x="385" y="105" text-anchor="middle" fill="#1c2b33" font-size="11">box 3</text>
+<rect x="400" y="45" width="20" height="40" fill="#e9f3f6" stroke="#0f7c8c"/><text x="410" y="122" text-anchor="middle" fill="#1c2b33" font-size="11">prep 2</text>
+<rect x="420" y="45" width="180" height="40" fill="#0f7c8c" fill-opacity="0.35" stroke="#0f7c8c"/><text x="510" y="70" text-anchor="middle" fill="#1c2b33">CNN forward, 18 ms</text>
+<rect x="600" y="45" width="40" height="40" fill="#e9f3f6" stroke="#5b7083"/><text x="620" y="105" text-anchor="middle" fill="#1c2b33" font-size="11">screen 4</text>
+<line x1="40" y1="140" x2="640" y2="140" stroke="#1c2b33"/>
+<g fill="#5b7083" font-size="11" text-anchor="middle"><text x="40" y="158">0</text><text x="140" y="158">10</text><text x="240" y="158">20</text><text x="340" y="158">30</text><text x="440" y="158">40</text><text x="540" y="158">50</text><text x="640" y="158">60 ms</text></g>
+<g stroke="#1c2b33"><line x1="40" y1="136" x2="40" y2="144"/><line x1="140" y1="136" x2="140" y2="144"/><line x1="240" y1="136" x2="240" y2="144"/><line x1="340" y1="136" x2="340" y2="144"/><line x1="440" y1="136" x2="440" y2="144"/><line x1="540" y1="136" x2="540" y2="144"/><line x1="640" y1="136" x2="640" y2="144"/></g>
+</svg>
+<figcaption>Figure 11.1. The 60 ms from "weight is steady" to "name on screen", drawn to scale. Waiting for a fresh camera frame takes longer than the whole neural network.</figcaption>
+</figure>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>Capture, box, prepare and predict together took about 60 ms on the Pi: about 33 ms for a fresh frame (the C270 delivers 30 frames per second at 640 x 480), 3 ms to find the box, 2 ms to prepare, 18 ms for the forward pass and about 4 ms to update the screen.</p></div>
+
+<h2>The whole timeline of one item</h2>
+<p>The 60 ms sit inside a longer story. Most of the time between "item put down" and "name on screen" is spent waiting for the scale, not computing.</p>
+<figure>
+<svg width="700" height="200" viewBox="0 0 700 200" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<text x="350" y="20" text-anchor="middle" fill="#1c2b33">One item on the Pi, to scale (predicted times)</text>
+<line x1="40" y1="130" x2="660" y2="130" stroke="#1c2b33"/>
+<g fill="#5b7083" font-size="11" text-anchor="middle"><text x="40" y="150">0 s</text><text x="200" y="150">0.4</text><text x="360" y="150">0.8</text><text x="520" y="150">1.2</text><text x="640" y="150">1.5 s</text></g>
+<g stroke="#1c2b33"><line x1="40" y1="126" x2="40" y2="134"/><line x1="200" y1="126" x2="200" y2="134"/><line x1="360" y1="126" x2="360" y2="134"/><line x1="520" y1="126" x2="520" y2="134"/><line x1="640" y1="126" x2="640" y2="134"/></g>
+<rect x="40" y="60" width="480" height="40" fill="#e9f3f6" stroke="#5b7083"/><text x="280" y="78" text-anchor="middle" fill="#1c2b33">Settling: 10 readings a second, median of 5,</text><text x="280" y="94" text-anchor="middle" fill="#1c2b33">wait until 8 agree within 2 g (about 1.2 s)</text>
+<rect x="520" y="60" width="24" height="40" fill="#0f7c8c" fill-opacity="0.5" stroke="#0f7c8c"/>
+<rect x="544" y="60" width="96" height="40" fill="#fdf0e2" stroke="#d9822b"/><text x="592" y="84" text-anchor="middle" fill="#1c2b33" font-size="11">next tick +</text><text x="592" y="97" text-anchor="middle" fill="#1c2b33" font-size="11">redraw</text>
+<text x="532" y="52" text-anchor="middle" fill="#0f7c8c" font-size="11">photo + CNN 60 ms</text>
+<line x1="40" y1="45" x2="40" y2="125" stroke="#d9822b" stroke-width="2"/><text x="44" y="175" fill="#d9822b" font-size="11">item put down</text>
+<line x1="640" y1="45" x2="640" y2="125" stroke="#d9822b" stroke-width="2"/><text x="636" y="175" text-anchor="end" fill="#d9822b" font-size="11">name, grams and price on screen</text>
+</svg>
+<figcaption>Figure 11.2. The timeline of one item. About 1.2 s of settling, then the photo and the CNN in about 60 ms, then the screen update on the next tick. A faster network would barely shorten the 1.5 s total; a faster scale would.</figcaption>
+</figure>
+<div class="box why"><div class="label">Why not make the network faster?</div><p>The network uses about 1% of the 1.5 s the customer waits. Making it ten times faster would save 16 ms, which nobody would notice. If I wanted the kiosk to feel faster, the place to work is the 1.2 s settling time, for example by running the HX711 at 80 readings per second (chapter 12). Knowing where the time goes stopped me from optimising the wrong part.</p></div>
+
+<h2>Choices that keep it light</h2>
+<table>
+<thead><tr><th>Choice</th><th>What it saves</th></tr></thead>
+<tbody>
+<tr><td>Predict once per item, when the weight is steady, not on every camera frame</td><td>About 30 predictions per second would keep a core busy all the time and heat the Pi; one per item costs nothing between customers</td></tr>
+<tr><td>A 64 x 64 input</td><td>About 4 times fewer multiplications than 128 x 128</td></tr>
+<tr><td>float32 everywhere</td><td>Half the memory and about twice the arithmetic speed of float64 on the Pi's processor</td></tr>
+<tr><td>No Python loops over pixels: 9-cell loop with einsum, reshape trick for pooling</td><td>The difference between 18 ms and several seconds per photo</td></tr>
+<tr><td>Weights loaded once at start-up and kept in memory</td><td>No file reading for each item</td></tr>
+<tr><td>Inference-only use of the same classes</td><td>At the kiosk nothing calls <code>backward</code>, so no gradients are computed or stored</td></tr>
+</tbody>
+</table>
+<div class="box careful"><div class="label">Be careful</div><p>Each layer's <code>forward</code> remembers its input for a possible backward pass. During training that is needed. At the kiosk it means the network keeps the last photo's intermediate maps in memory, about 0.5 MB. That is harmless on a 4 GB Pi, but it is a design cost I know about: a product version would have a separate inference mode that forgets those arrays.</p></div>
+
+<h2>What edge inference buys</h2>
+<table>
+<thead><tr><th></th><th>On the Pi (my kiosk)</th><th>On a cloud server</th></tr></thead>
+<tbody>
+<tr><td>Speed</td><td>60 ms, always</td><td>60 ms of computing plus the upload of a photo and the reply: often 200 to 500 ms on shop Wi-Fi, sometimes seconds</td></tr>
+<tr><td>Network</td><td>Not needed at all</td><td>No internet means no checkout</td></tr>
+<tr><td>Cost</td><td>The Pi, once</td><td>A server bill every month, growing with every item scanned</td></tr>
+<tr><td>Privacy</td><td>Photos never leave the box; they are not even saved</td><td>Every photo, which may show customers' hands or faces, leaves the shop</td></tr>
+<tr><td>Updates</td><td>Copy a new weights file to each kiosk</td><td>Change one server and every kiosk is updated</td></tr>
+</tbody>
+</table>
+<p>The last row is the one honest advantage of the cloud. For one kiosk, copying one file with scp is easy. For a hundred kiosks, I would need a proper way to send updates.</p>
+
+<h2>The confidence rule: 0.60</h2>
+<p>The network always gives an answer. To avoid showing a confident-looking wrong answer, the app looks at the top chance. If it is 0.60 or more, the screen shows the name with the "Add to bill" and "Wrong item" buttons. If it is below 0.60, the screen says "Not sure, please choose" and shows the top 3 guesses as big buttons, plus "Other items" for the full list.</p>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>On the 283 test crops, 266 had a top chance of 0.60 or more, and 256 of those were right (96.2%). The other 17 fell below 0.60; only 6 of them were right. So the rule sent 6% of items to the "please choose" screen and caught 11 of the 21 mistakes before they reached the bill. For 15 of the 17 unsure crops, the right class was among the top 3 guesses shown.</p></div>
+<div class="box why"><div class="label">Why 0.60 and not 0.90?</div><p>The threshold trades two annoyances. A high threshold catches more mistakes but asks the customer to choose much more often, even for items the network got right. A low threshold rarely asks but lets more mistakes through. I tried values from 0.40 to 0.90 on the validation pile (never the test pile) and 0.60 was the point where asking more often stopped catching many more mistakes. The remaining confident mistakes are what the "Wrong item" button is for.</p></div>
+
+<h2>A first test on real kiosk photos</h2>
+<p>The 92.6% was measured on crops cut with hand-drawn boxes. At the kiosk the box comes from the colour mask, the item is freshly placed, and the photo is new. So after the kiosk was built I ran a small test of the full chain: I put items on the tray one at a time and wrote down what the screen showed.</p>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>I placed 60 items (5 of each class, bought on a different day from the version 1 photos). The kiosk named 54 correctly at the first try (90%). 4 of the 6 wrong ones were Mosambi or Lemon. In 5 of the 6 cases the right item was in the top 3 on the "Wrong item" screen. The colour mask found the item in all 60 photos.</p></div>
+<p>90% on 60 new items is close to the 92.6% on test crops, and the same pair causes most of the trouble. With only 60 items the wobble is large (roughly plus or minus 8 points), so I treat it as "it works about as well as the test said", not as a second precise number.</p>
+
+<div class="box tip"><div class="label">Interview tip</div><p>"How does it run on the Pi?" My answer: "The Pi imports the same NumPy layer code and loads a 320 kB weights file once. Inference is about 2.5 million multiplications, 18 ms on the Pi 4. I only predict once per item, triggered by a steady weight, so the CPU is idle the rest of the time. Below 0.60 confidence the screen shows the top 3 instead of guessing." Then I add that the camera frame takes longer than the network, which shows I measured the whole chain.</p></div>
+
+<div class="box story"><div class="label">Design story</div><p>Version 1 ran YOLOv5x on a laptop processor and took around a second per photo, and it ran only when the user pressed "Add". A Pi could not have run it in any reasonable time. Version 2's network is a thousand times smaller because its job is smaller, and that is what made the Pi possible: one item at a time, already cropped, 12 classes.</p></div>
+</section>
+<section class="chapter" id="ch12">
+<h1><span class="num">12</span> Weighing: load cell and HX711</h1>
+<p class="small">Short version: the load cell turns weight into a voltage of a fraction of a millivolt. The HX711 amplifies it 128 times and converts it to a 24-bit number. My Python code fetches that number over two wires by pulsing the clock pin 25 times and reading one bit after each pulse. The hard part is timing: if Linux pauses my program while the clock pin is high, the HX711 resets and that reading comes out wrong. I let those rare wrong readings happen and remove them in software.</p>
+
+<h2>From weight to millivolts, in one paragraph</h2>
+<p>Chapter 3 described the parts; here is the chain again in one place, because everything in this chapter follows from it. The tray presses on the free end of the aluminium bar. The bar bends a tiny amount, a few hundredths of a millimetre. Two strain gauges stretch and their resistance rises; two are squeezed and their resistance falls. The four gauges form a Wheatstone bridge, so instead of four tiny resistance changes I get one small voltage between its two middle points: about 0.25 mV for a 412 g tomato, about 3 mV for the full 5 kg. The voltage is proportional to the weight. That straight-line relation is what makes calibration so simple (chapter 13).</p>
+
+<h2>What the HX711 does</h2>
+<p>The HX711 chip has three parts inside: a programmable amplifier, a 24-bit analog to digital converter (ADC), and a simple serial output.</p>
+<ul>
+<li><b>The amplifier</b> multiplies the bridge voltage. On channel A the gain can be 128 or 64; channel B always uses 32. I use channel A with gain 128, the most sensitive setting.</li>
+<li><b>The ADC</b> measures the amplified voltage and gives a whole number. 24 bits give 2<sup>24</sup> = 16,777,216 different values. Because the bridge voltage can be positive or negative, the number is signed: from -8,388,608 to +8,388,607. With gain 128 and about 3 V on the bridge, one step of the number is about 1.4 billionths of a volt at the input. My calibration (chapter 13) found 431 steps per gram, so on paper the HX711 can see a change of 1/431 of a gram. In practice the noise is much larger than one step, which is why I filter.</li>
+<li><b>The serial output</b> hands the number over one bit at a time on two wires.</li>
+</ul>
+<div class="box why"><div class="label">Why 24 bits when the noise is bigger than one step?</div><p>The extra bits are not about seeing a thousandth of a gram. They give range and headroom. The empty tray alone produces an offset of 123,450 counts, and 5 kg adds about 2.15 million more. A converter with fewer bits would need careful adjustment so that both the offset and the full load fit inside its range. With 24 bits everything fits easily and there are still hundreds of counts per gram left over to average.</p></div>
+<p>The chip makes a new reading 10 times a second on my board, because its RATE pin is tied low. Tied high, it makes 80 per second. Inside, the chip averages the signal over each reading's time window, so the slower rate is quieter. The HX711 datasheet also gives a settling time: after a big change it takes about 4 readings at 10 per second (400 ms) before the output fully reflects the new input.</p>
+
+<h2>The two wires, DT and SCK</h2>
+<p>The HX711 talks to the Pi over two wires, with a protocol (a fixed set of rules for talking) that is simpler than I2C or SPI and specific to this chip.</p>
+<ul>
+<li><b>DT</b> (data, sometimes called DOUT) goes from the HX711 to the Pi's GPIO 5. The HX711 controls it; the Pi only reads it.</li>
+<li><b>SCK</b> (serial clock, sometimes PD_SCK) goes from the Pi's GPIO 6 to the HX711. The Pi controls it. Each pulse on it says "give me the next bit".</li>
+</ul>
+
+<h2>How one reading works</h2>
+<ol>
+<li><b>Wait for ready.</b> While a reading is being made, DT is high. When a new reading is ready, the HX711 pulls DT low. That is the signal "come and get it".</li>
+<li><b>24 pulses, biggest bit first.</b> The Pi sets SCK high, then low again. On the rising edge the HX711 puts the next bit on DT. The Pi reads DT, and the bit becomes the next digit of the number. Twenty-four pulses give all 24 bits, from the most significant bit (the one worth 8,388,608) down to the least significant (worth 1).</li>
+<li><b>Extra pulses choose the next reading.</b> The number of extra pulses after the 24th sets the channel and gain for the <i>next</i> reading: 1 extra pulse (25 in total) means channel A, gain 128; 2 extra means channel B, gain 32; 3 extra means channel A, gain 64. I always give 25 pulses.</li>
+<li><b>DT goes high again</b> after the last pulse, until the next reading is ready about 100 ms later.</li>
+</ol>
+
+<figure>
+<svg width="700" height="250" viewBox="0 0 700 250" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<text x="20" y="75" fill="#1c2b33">DT</text><text x="20" y="160" fill="#1c2b33">SCK</text>
+<path d="M60,50 H120 V90 H160 V50 H200 V90 H240 V90 H280 V50 H320 V50 H360 V90 H520 V50 H560 V90 H600 V50 H680" fill="none" stroke="#0f7c8c" stroke-width="2.5"/>
+<path d="M60,175 H150 V135 H170 V175 H230 V135 H250 V175 H310 V135 H330 V175 H390 V135 H410 V175 H470 V135 H490 V175 H550 V135 H570 V175 H610 V135 H630 V175 H680" fill="none" stroke="#d9822b" stroke-width="2.5"/>
+<text x="90" y="40" text-anchor="middle" fill="#5b7083" font-size="11">busy (high)</text>
+<text x="135" y="108" text-anchor="middle" fill="#0f7c8c" font-size="11">ready (low)</text>
+<g fill="#1c2b33" font-size="11" text-anchor="middle"><text x="180" y="45">bit 23</text><text x="260" y="45">bit 22</text><text x="340" y="45">bit 21</text><text x="430" y="45">. . .</text><text x="500" y="45">bit 1</text><text x="580" y="45">bit 0</text></g>
+<g fill="#5b7083" font-size="10" text-anchor="middle"><text x="180" y="125">1</text><text x="240" y="125">2</text><text x="320" y="125">3</text><text x="400" y="125">4</text><text x="480" y="125">23</text><text x="560" y="125">24</text><text x="620" y="125">25</text></g>
+<text x="620" y="198" text-anchor="middle" fill="#d9822b" font-size="11">25th pulse:</text><text x="620" y="212" text-anchor="middle" fill="#d9822b" font-size="11">gain 128 next</text>
+<line x1="230" y1="95" x2="230" y2="195" stroke="#5b7083" stroke-dasharray="2,3"/><line x1="250" y1="95" x2="250" y2="195" stroke="#5b7083" stroke-dasharray="2,3"/>
+<text x="240" y="230" text-anchor="middle" fill="#1c2b33" font-size="11">SCK high: must stay under 60 us</text>
+<text x="350" y="20" text-anchor="middle" fill="#1c2b33">One HX711 reading (the example bits are 1, 0, 1, ..., 0, 1)</text>
+</svg>
+<figcaption>Figure 12.1. The timing of one reading. DT going low says a reading is ready. Each SCK pulse shifts the next bit onto DT, biggest bit first; the Pi reads DT after each pulse. The 25th pulse selects channel A with gain 128 for the next reading and DT returns high. Each SCK high time must be shorter than 60 microseconds.</figcaption>
+</figure>
+
+<h2>Two's complement for 24 bits</h2>
+<p>The 24 bits arrive as a plain row of ones and zeros. To turn them into a signed number, the HX711 uses two's complement, the standard way computers store negative whole numbers. The rule for 24 bits is short: read the bits as an ordinary positive number from 0 to 16,777,215. If the top bit (bit 23) is 1, the number is really negative, and I subtract 2<sup>24</sup> = 16,777,216.</p>
+<table>
+<thead><tr><th>Bits received (24)</th><th>As a plain number</th><th>Top bit</th><th>Signed value</th></tr></thead>
+<tbody>
+<tr><td><code>0000 0100 1001 0111 1101 1110</code></td><td>301,022</td><td>0</td><td>301,022 (empty tray plus a 412 g tomato)</td></tr>
+<tr><td><code>0000 0000 0000 0000 0000 0001</code></td><td>1</td><td>0</td><td>1</td></tr>
+<tr><td><code>1111 1111 1111 1111 1111 1111</code></td><td>16,777,215</td><td>1</td><td>16,777,215 - 16,777,216 = -1</td></tr>
+<tr><td><code>1111 1111 1111 1111 1111 0000</code></td><td>16,777,200</td><td>1</td><td>16,777,200 - 16,777,216 = -16</td></tr>
+<tr><td><code>1000 0000 0000 0000 0000 0000</code></td><td>8,388,608</td><td>1</td><td>-8,388,608 (the most negative value)</td></tr>
+</tbody>
+</table>
+<p>In code this is two lines: <code>if value &amp; 0x800000: value -= 1 &lt;&lt; 24</code>. <code>0x800000</code> is the number with only bit 23 set, written in hexadecimal (base 16), and <code>&amp;</code> keeps only the bits two numbers share, so the test is "is bit 23 a 1?". <code>1 &lt;&lt; 24</code> means 1 shifted left 24 places, which is 16,777,216.</p>
+<div class="box careful"><div class="label">Be careful</div><p>Forgetting the two's complement step gives a bug that hides well. As long as the load cell gives a positive signal, nothing goes wrong. Then one day the zero drifts slightly negative, a reading of -16 arrives as 16,777,200, and the scale suddenly shows 38,000 g. If the scale ever shows a huge number with an empty tray, this line is the first thing I check.</p></div>
+
+<h2>The read_raw() code</h2>
+<p>Here is the method in <code>kiosk/hx711.py</code> that does all of the above. It returns one reading as a signed whole number, or <code>None</code> if the HX711 never says it is ready.</p>
+<pre><code>def read_raw(self, timeout=1.0):
+    """One 24-bit reading as a signed whole number, or None after `timeout` seconds."""
+    deadline = time.monotonic() + timeout
+    while not self.is_ready():
+        if time.monotonic() &gt; deadline:
+            return None                            # wire loose, chip unpowered, or swapped pins
+        time.sleep(0.001)
+    value = 0
+    for _ in range(24):                            # 24 bits, biggest bit first
+        GPIO.output(self.sck, 1)                   # pulse up: the HX711 puts the next bit on DT
+        GPIO.output(self.sck, 0)                   # pulse down at once: keep SCK high only briefly
+        value = (value &lt;&lt; 1) | GPIO.input(self.dt)
+    GPIO.output(self.sck, 1)                       # 25th pulse: channel A, gain 128 next time
+    GPIO.output(self.sck, 0)
+    if value &amp; 0x800000:                           # top bit set: a negative number
+        value -= 1 &lt;&lt; 24                           # two's complement for 24 bits
+    return value</code></pre>
+<p>The first loop waits for DT to go low, checking every millisecond. <code>time.monotonic()</code> is a clock that only moves forward, even if the Pi's date and time are changed, so it is the right clock for timeouts. If a full second passes without a ready signal, the method gives up and returns <code>None</code>. A healthy HX711 is ready every 100 ms, so a second of silence means something is wrong: a loose wire, no power, or DT and SCK swapped.</p>
+<p>The second loop is the 24 pulses. <code>value &lt;&lt; 1</code> shifts the bits collected so far one place to the left, making room, and <code>| GPIO.input(self.dt)</code> puts the new bit in the empty place. After 24 turns the bits are in the right order. Then comes the 25th pulse and the two's complement step.</p>
+<p>The pins are set up in the constructor:</p>
+<pre><code>def __init__(self, dt_pin=DT_PIN, sck_pin=SCK_PIN):
+    self.dt, self.sck = dt_pin, sck_pin
+    GPIO.setwarnings(False)
+    GPIO.setmode(GPIO.BCM)                         # use GPIO numbers, not pin numbers
+    GPIO.setup(self.sck, GPIO.OUT, initial=GPIO.LOW)
+    GPIO.setup(self.dt, GPIO.IN)</code></pre>
+<p><code>GPIO.setmode(GPIO.BCM)</code> tells the library that pin numbers mean GPIO numbers (5 and 6), not physical pin numbers (29 and 31). SCK is an output that starts low; DT is an input. Starting SCK low matters: if SCK were high at start-up for more than 60 microseconds, the HX711 would power down before the first reading.</p>
+<div class="box why"><div class="label">Why a timeout returning None, and not an exception?</div><p>A missing reading is not a disaster for the kiosk. The app's tick runs 10 times a second; if one tick gets <code>None</code>, the filter simply keeps its last value (chapter 13) and the next tick tries again. An exception would need catching in the app anyway. Returning <code>None</code> makes the "no reading" case visible in the code and keeps the app running. If <code>None</code> keeps coming for several seconds, the app shows "Scale not responding" so a person checks the wires.</p></div>
+
+<h2>The timing trap</h2>
+<p>The HX711 has a power-saving feature: if SCK stays high for more than 60 microseconds, the chip goes to sleep. When SCK goes low again it wakes up and starts a fresh reading. This is meant for battery devices that want to switch the chip off. For me it is a trap.</p>
+<p>My program sets SCK high, then low, in two Python calls. Normally the gap between them is a few microseconds. But Linux can pause any program at any moment to run something else: the desktop, the Wi-Fi driver, a log writer. Most pauses are short, but now and then one lasts longer than 60 microseconds. If it happens exactly between "SCK high" and "SCK low", the HX711 falls asleep in the middle of sending a number. The bits already read are fine; the rest are not, and the number comes out wildly wrong.</p>
+
+<figure>
+<svg width="700" height="220" viewBox="0 0 700 220" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<text x="20" y="70" fill="#1c2b33">SCK</text><text x="20" y="150" fill="#1c2b33">DT</text>
+<path d="M60,85 H100 V50 H115 V85 H170 V50 H185 V85 H240 V50 H500 V85 H560 V50 H575 V85 H660" fill="none" stroke="#d9822b" stroke-width="2.5"/>
+<rect x="240" y="40" width="260" height="56" fill="#d9822b" fill-opacity="0.12" stroke="none"/>
+<text x="370" y="35" text-anchor="middle" fill="#d9822b">Linux pauses the program: SCK stays high for 400 us</text>
+<line x1="300" y1="100" x2="300" y2="195" stroke="#5b7083" stroke-dasharray="3,3"/><text x="304" y="200" fill="#5b7083" font-size="11">60 us: the HX711 powers down</text>
+<path d="M60,165 H100 V130 H185 V165 H240 V130 H300 V130 H660" fill="none" stroke="#0f7c8c" stroke-width="2.5"/>
+<text x="580" y="122" text-anchor="middle" fill="#0f7c8c" font-size="11">DT stuck high:</text><text x="580" y="152" text-anchor="middle" fill="#0f7c8c" font-size="11">all later bits read as 1</text>
+<text x="350" y="216" text-anchor="middle" fill="#1c2b33" font-size="11">The reading is garbage, e.g. 1,244,050 instead of 301,022. It looks like a sudden 2,600 g.</text>
+</svg>
+<figcaption>Figure 12.2. The timing trap. If Linux pauses the program after setting SCK high, the clock stays high longer than 60 microseconds, the HX711 powers down, and the remaining bits are wrong. The program cannot notice this from the bits alone.</figcaption>
+</figure>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>Each GPIO call through rpi-lgpio took about 3 microseconds on the Pi 4, so a normal SCK pulse was high for about 3 microseconds and one full reading of 25 pulses took about 0.4 ms. Over a 30-minute test with a fixed 500 g weight (18,000 readings), 15 readings were wild, about one every 2 minutes. Every one of them was removed by the median filter of chapter 13.</p></div>
+<div class="box why"><div class="label">Why did the ESP8266 in version 1 not have this problem?</div><p>The ESP8266 is a microcontroller running one program with no operating system. Nothing else can take the processor away in the middle of the 25 pulses, so SCK is always high for exactly as long as the code says. The Pi gives me Linux, Python, OpenCV and a touchscreen, and the price is that my program does not own the processor. The HX711 library on the ESP8266 even switches off interrupts during a reading; a normal Linux program cannot do that.</p></div>
+
+<h2>Three ways to handle the trap</h2>
+<table>
+<thead><tr><th>Way</th><th>How it works</th><th>Good</th><th>Bad</th></tr></thead>
+<tbody>
+<tr><td><b>Software filter (chosen)</b></td><td>Accept that a reading is sometimes wrong. A median of the newest 5 readings throws away any single wild one.</td><td>No extra parts, no extra programs, simple to explain and test on a laptop</td><td>Wild readings still happen; the median adds about 0.2 s of delay</td></tr>
+<tr><td>pigpio library</td><td>A background program that uses the Pi's DMA hardware (a part that moves data without the processor) to make pulses with exact timing</td><td>Exact pulse timing from Linux</td><td>An extra background program that must be running; does not support the newest Pi models; more to install</td></tr>
+<tr><td>A small microcontroller in between</td><td>A board like an ESP8266 or a tiny Arduino reads the HX711 and sends the weight to the Pi over USB serial</td><td>Perfect timing, as in version 1</td><td>A second device with its own firmware, the very thing version 2 set out to remove</td></tr>
+</tbody>
+</table>
+<p>I chose the software filter because the problem is rare (about 1 reading in 1,200) and its effect is obvious: a wild reading is millions of counts away from its neighbours, so it is easy to recognise and throw away. The filter also removes ordinary noise, which I needed anyway.</p>
+<div class="box tip"><div class="label">Interview tip</div><p>A good question to expect: "If Linux is not real-time, how do you bit-bang a timing-sensitive protocol from Python?" My answer: "Mostly it works because the pulses are only microseconds long. When Linux pauses my program during a pulse, the HX711 resets and that reading is garbage. That happened about once every two minutes. Instead of adding hardware, I made the readings robust: a median of 5 removes any single bad reading, and the steadiness check stops a bad value from ever reaching the bill."</p></div>
+
+<h2>10 or 80 readings per second</h2>
+<p>The HX711's RATE pin chooses 10 or 80 readings per second. I kept 10.</p>
+<table>
+<thead><tr><th></th><th>10 per second (RATE low, my choice)</th><th>80 per second (RATE high)</th></tr></thead>
+<tbody>
+<tr><td>Noise of one reading</td><td>lower (the chip averages over 100 ms)</td><td>about 3 times higher</td></tr>
+<tr><td>Time to a steady weight</td><td>about 1.2 s</td><td>could be about 0.4 s with a retuned filter</td></tr>
+<tr><td>Chance of a wild reading</td><td>about 1 in 1,200</td><td>the same per reading, so 8 times as many per minute</td></tr>
+<tr><td>Fits the app's tick</td><td>exactly one reading per 100 ms tick</td><td>8 readings per tick, needs a reading thread</td></tr>
+</tbody>
+</table>
+<p>At 80 per second the app would need a separate thread (a second line of work running in parallel inside the program) to collect readings, because the tick runs only 10 times a second. That is more code and more ways to go wrong, for about 0.8 s saved per item. For a first version I kept it simple. It is the first speed improvement on my list.</p>
+
+<div class="box story"><div class="label">Design story</div><p>In version 1 the ESP8266 averaged 10 readings and returned one integer when the laptop asked for it over Wi-Fi, once per "Add" press. There was no check that the weight had stopped moving, so pressing "Add" while the item was still rocking gave a wrong price. Version 2 reads the HX711 directly, 10 times a second, and the filter decides when the weight is trustworthy. The scale got simpler to wire and more careful to read at the same time.</p></div>
+</section>
+<section class="chapter" id="ch13">
+<h1><span class="num">13</span> From raw number to steady grams</h1>
+<p class="small">Short version: a raw HX711 number becomes grams with one straight-line formula, grams = (raw - offset) / counts_per_gram. Tare finds the offset; one known 500 g weight finds counts_per_gram = 431.0. The raw readings are then cleaned by a median of 5, which removes wild readings, and a weight counts as steady only when 8 cleaned readings agree within 2 g. The cost is about 1.2 s of waiting. The result is within 2 g from 100 g to 2 kg.</p>
+
+<h2>Tare: finding zero</h2>
+<p>With nothing on it, the scale does not read 0. The tray, the spacer and the load cell's own small imbalance all add to the raw number. On my kiosk the empty tray reads about 123,450 counts. This number is called the offset. Taring means measuring it, so that it can be subtracted from every later reading. Shop scales have a "tare" button for the same reason: to remove the weight of the container.</p>
+<p>The kiosk tares at every start-up. It reads 20 raw readings (2 s at 10 per second) with the tray empty and takes their median as the offset. Using the median of 20 rather than one reading means a wild reading during start-up cannot spoil the zero.</p>
+
+<h2>Calibration: finding the slope</h2>
+<p>Knowing zero is not enough. I also need to know how many counts one gram adds. This number, counts_per_gram, depends on the load cell, the bridge voltage and the HX711's gain, so it must be measured once for each kiosk. That measurement is called calibration.</p>
+<p>The script <code>kiosk/calibrate.py</code> does it in three steps, with prompts on the screen:</p>
+<ol>
+<li>"Empty the tray and press Enter." It reads 20 readings and takes the median: the offset.</li>
+<li>"Put the 500 g weight in the middle of the tray and press Enter." It reads 20 more and takes the median.</li>
+<li>It divides the difference by 500, prints the result, and saves offset and counts_per_gram in <code>kiosk/config.json</code>.</li>
+</ol>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>In my calibration the empty tray read 123,450 counts and the tray with a 500 g check weight read 338,950 counts. So counts_per_gram = (338,950 - 123,450) / 500 = 215,500 / 500 = 431.0. Version 1 used a scale factor of 430 on the ESP8266, which agrees: same load cell, same HX711.</p></div>
+<p>After calibration, every raw reading turns into grams with one line:</p>
+<pre><code>grams = (raw - offset) / counts_per_gram
+
+example: (301,022 - 123,450) / 431.0 = 177,572 / 431.0 = 412.0 g</code></pre>
+<div class="box why"><div class="label">Why does one weight and a straight line work?</div><p>The bar bends in proportion to the force, the gauges change in proportion to the bending, the bridge voltage changes in proportion to the gauges, and the HX711 converts that voltage in proportion too. A chain of proportional steps is itself proportional, so a plot of raw counts against grams is a straight line. A straight line is fixed by two points: zero (the offset) and one known weight. More points would only check the line, which is what the check-weight test below does.</p></div>
+
+<figure>
+<svg width="700" height="260" viewBox="0 0 700 260" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<line x1="90" y1="220" x2="660" y2="220" stroke="#1c2b33"/><line x1="90" y1="220" x2="90" y2="20" stroke="#1c2b33"/>
+<g fill="#5b7083" font-size="11" text-anchor="middle"><text x="90" y="238">0 g</text><text x="190" y="238">250</text><text x="290" y="238">500</text><text x="390" y="238">750</text><text x="490" y="238">1,000</text><text x="590" y="238">1,250 g</text></g>
+<g fill="#5b7083" font-size="11" text-anchor="end"><text x="84" y="190">123,450</text><text x="84" y="104">338,950</text><text x="84" y="18">554,450</text></g>
+<line x1="90" y1="186" x2="490" y2="14" stroke="#0f7c8c" stroke-width="2.5"/>
+<circle cx="90" cy="186" r="6" fill="#d9822b"/><circle cx="290" cy="100" r="6" fill="#d9822b"/>
+<line x1="90" y1="100" x2="290" y2="100" stroke="#5b7083" stroke-dasharray="3,3"/><line x1="290" y1="100" x2="290" y2="220" stroke="#5b7083" stroke-dasharray="3,3"/>
+<text x="100" y="172" fill="#1c2b33" font-size="11">empty tray: the offset</text>
+<text x="300" y="96" fill="#1c2b33" font-size="11">500 g check weight</text>
+<text x="300" y="150" fill="#5b7083" font-size="11">rise 215,500 counts</text><text x="300" y="165" fill="#5b7083" font-size="11">over 500 g = 431.0 counts per gram</text>
+<text x="470" y="70" fill="#0f7c8c" font-size="11">raw = offset + 431.0 x grams</text>
+<text x="370" y="255" text-anchor="middle" fill="#1c2b33" font-size="12">weight on the tray</text>
+</svg>
+<figcaption>Figure 13.1. Calibration is fitting a straight line through two points. The empty tray gives the offset (where the line starts), and the 500 g weight gives the slope (431.0 counts per gram). Every later reading is converted by reading this line backwards.</figcaption>
+</figure>
+<div class="box careful"><div class="label">Be careful</div><p>The calibration is only as good as the check weight. A "500 g" weight that is really 495 g makes every reading 1% too heavy, and that error is invisible in normal use because the line is still perfectly straight. I used a 500 g weight from a kitchen scale set and checked it against a shop's scale. If the kiosk is ever moved, rebuilt or gets a new load cell, I run <code>calibrate.py</code> again.</p></div>
+
+<h2>Cleaning: the median of 5</h2>
+<p>Raw readings jump around a little even with a still tray: electrical noise, air movement, vibration from the table. And once every couple of minutes a wild reading arrives from the timing trap of chapter 12. The first cleaning step handles both: for every new raw reading I take the median of the newest 5 raw readings.</p>
+<p>The median is the middle value after sorting. Here is a worked example, in grams for readability, with one wild reading:</p>
+<table>
+<thead><tr><th>Newest 5 readings (g)</th><th>Sorted</th><th>Median</th><th>Average, for comparison</th></tr></thead>
+<tbody>
+<tr><td>412.3, 411.6, 412.2, 412.0, 412.0</td><td>411.6, 412.0, 412.0, 412.2, 412.3</td><td>412.0</td><td>412.0</td></tr>
+<tr><td>411.6, 412.2, 412.0, 412.0, <b>2,600</b></td><td>411.6, 412.0, 412.0, 412.2, <b>2,600</b></td><td>412.0</td><td>849.6</td></tr>
+<tr><td>412.2, 412.0, 412.0, <b>2,600</b>, 412.2</td><td>412.0, 412.0, 412.2, 412.2, <b>2,600</b></td><td>412.2</td><td>849.7</td></tr>
+</tbody>
+</table>
+<p>The wild 2,600 g reading is always at the end of the sorted list, so it is never the middle value. The median does not move. The average jumps to almost 850 g and would stay wrong for five readings until the wild value leaves the window.</p>
+<div class="box why"><div class="label">Why median and not average?</div><p>An average lets every reading pull on the result in proportion to its size, so one absurd value pulls hard. A median only cares about order. As long as fewer than half of the 5 readings are wild (fewer than 3), the median is a real reading. Wild readings come one at a time, minutes apart, so the median of 5 removes every one of them. The average would also need the median's help, so I use the median first and average only later, among cleaned values.</p></div>
+<div class="box why"><div class="label">Why 5 and not 3 or 9?</div><p>A window of 3 also removes a single wild reading, but two wild readings close together (which happened twice in my 30-minute test) would get through. A window of 9 is safer but makes the cleaned value lag further behind a real change: the median only switches to the new weight once more than half the window holds new readings, so 5 readings (0.5 s) for a window of 9 against 3 readings (0.3 s) for a window of 5. 5 was the smallest window that removed every wild reading I recorded.</p></div>
+
+<h2>The steady rule</h2>
+<p>Cleaned values still move while an item settles: it rolls a little, the tray rocks, the customer's hand leaves it. I must not take a photo or a price during that time. So the second step asks: are the newest 8 cleaned values all within 2 g of each other? If the biggest minus the smallest is less than 2 g, the weight is steady, and the weight I use is their average.</p>
+<p>The two numbers come from what the kiosk needs. 8 readings at 10 per second is 0.8 s of stillness, long enough that a rocking tray or a moving hand would break the rule. 2 g is a little above the noise of the cleaned values (about plus or minus 0.5 g), so a still tray always passes, but any real movement fails. The average of 8 values then smooths the last bit of noise out of the billed weight.</p>
+
+<h2>The WeightFilter code</h2>
+<p>Both steps live in one small class in <code>kiosk/weight_filter.py</code>. The app creates one filter at start-up and feeds it every raw reading.</p>
+<pre><code>def __init__(self, offset, counts_per_gram, median_n=MEDIAN_N, steady_n=STEADY_N,
+             band_g=STEADY_BAND_G):
+    self.offset = float(offset)
+    self.cpg = float(counts_per_gram)
+    self.band = band_g
+    self.raw = deque(maxlen=median_n)       # newest raw readings
+    self.clean = deque(maxlen=steady_n)     # newest cleaned values, in grams
+    self.empty_count = 0                    # readings in a row with an empty, steady tray
+
+def to_grams(self, raw):
+    return (raw - self.offset) / self.cpg
+
+def add(self, raw):
+    """Feed one raw reading (or None). Returns the newest cleaned weight in grams."""
+    if raw is None:                         # read_raw timed out: keep what we have
+        return self.clean[-1] if self.clean else 0.0
+    self.raw.append(raw)
+    g = self.to_grams(median(self.raw))
+    self.clean.append(g)
+    self._auto_retare()
+    return g
+
+@property
+def steady(self):
+    return len(self.clean) == self.clean.maxlen and max(self.clean) - min(self.clean) &lt; self.band
+
+@property
+def weight(self):
+    """The average of the newest cleaned values: the number I bill."""
+    return sum(self.clean) / len(self.clean) if self.clean else 0.0</code></pre>
+<p>A <code>deque</code> with <code>maxlen</code> is a list that keeps only its newest items: adding a sixth item to a deque of length 5 drops the oldest. So <code>self.raw</code> always holds the newest 5 raw readings and <code>self.clean</code> the newest 8 cleaned values, with no extra bookkeeping. <code>add</code> appends the raw reading, converts the median of the window to grams, appends that to the cleaned list and returns it. A <code>None</code> from a timed-out reading changes nothing. <code>steady</code> and <code>weight</code> are properties, which means the app reads them like plain values (<code>f.steady</code>) although they are computed fresh each time.</p>
+<p>The file starts with a small doctest, an example written like a Python session that Python can run and check by itself. Running <code>python3 weight_filter.py</code> checks it and then plays a made-up run with my calibration numbers, including the tomato landing and one wild reading. Figure 13.2 is drawn from that run.</p>
+
+<figure>
+<svg width="700" height="300" viewBox="0 0 700 300" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<line x1="70" y1="250" x2="670" y2="250" stroke="#e3eaee"/><text x="62" y="254" text-anchor="end" fill="#5b7083" font-size="11">0 g</text>
+<line x1="70" y1="208" x2="670" y2="208" stroke="#e3eaee"/><text x="62" y="212" text-anchor="end" fill="#5b7083" font-size="11">100 g</text>
+<line x1="70" y1="166" x2="670" y2="166" stroke="#e3eaee"/><text x="62" y="170" text-anchor="end" fill="#5b7083" font-size="11">200 g</text>
+<line x1="70" y1="124" x2="670" y2="124" stroke="#e3eaee"/><text x="62" y="128" text-anchor="end" fill="#5b7083" font-size="11">300 g</text>
+<line x1="70" y1="82" x2="670" y2="82" stroke="#e3eaee"/><text x="62" y="86" text-anchor="end" fill="#5b7083" font-size="11">400 g</text>
+<line x1="70" y1="40" x2="670" y2="40" stroke="#e3eaee"/><text x="62" y="44" text-anchor="end" fill="#5b7083" font-size="11">500 g</text>
+<text x="70" y="268" text-anchor="middle" fill="#5b7083" font-size="11">0 s</text>
+<text x="178" y="268" text-anchor="middle" fill="#5b7083" font-size="11">0.5 s</text>
+<text x="285" y="268" text-anchor="middle" fill="#5b7083" font-size="11">1 s</text>
+<text x="392" y="268" text-anchor="middle" fill="#5b7083" font-size="11">1.5 s</text>
+<text x="500" y="268" text-anchor="middle" fill="#5b7083" font-size="11">2 s</text>
+<text x="608" y="268" text-anchor="middle" fill="#5b7083" font-size="11">2.5 s</text>
+<line x1="70" y1="30" x2="70" y2="250" stroke="#1c2b33"/><line x1="70" y1="250" x2="670" y2="250" stroke="#1c2b33"/>
+<polyline points="70.0,250.0 91.5,250.0 113.0,250.0 134.5,250.0 156.0,250.0 177.5,250.0 199.0,250.0 220.5,250.0 242.0,250.0 263.5,250.0 285.0,250.0 306.5,250.0 328.0,224.8 349.5,145.0 371.0,84.1 392.5,76.8 414.0,76.8 435.5,76.9 457.0,76.9 478.5,77.0 500.0,77.0 521.5,76.9 543.0,76.9 564.5,76.9 586.0,76.9 607.5,76.9 629.0,76.9 650.5,77.0 672.0,77.0" fill="none" stroke="#0f7c8c" stroke-width="2.5"/>
+<circle cx="70.0" cy="250.0" r="3.5" fill="#d9822b"/>
+<circle cx="91.5" cy="250.0" r="3.5" fill="#d9822b"/>
+<circle cx="113.0" cy="250.0" r="3.5" fill="#d9822b"/>
+<circle cx="134.5" cy="250.0" r="3.5" fill="#d9822b"/>
+<circle cx="156.0" cy="250.0" r="3.5" fill="#d9822b"/>
+<circle cx="177.5" cy="250.0" r="3.5" fill="#d9822b"/>
+<circle cx="199.0" cy="250.0" r="3.5" fill="#d9822b"/>
+<circle cx="220.5" cy="250.0" r="3.5" fill="#d9822b"/>
+<circle cx="242.0" cy="250.0" r="3.5" fill="#d9822b"/>
+<circle cx="263.5" cy="250.0" r="3.5" fill="#d9822b"/>
+<circle cx="285.0" cy="224.8" r="3.5" fill="#d9822b"/>
+<circle cx="306.5" cy="145.0" r="3.5" fill="#d9822b"/>
+<circle cx="328.0" cy="52.6" r="3.5" fill="#d9822b"/>
+<circle cx="349.5" cy="84.1" r="3.5" fill="#d9822b"/>
+<circle cx="371.0" cy="73.6" r="3.5" fill="#d9822b"/>
+<circle cx="392.5" cy="76.8" r="3.5" fill="#d9822b"/>
+<circle cx="414.0" cy="77.1" r="3.5" fill="#d9822b"/>
+<circle cx="435.5" cy="76.9" r="3.5" fill="#d9822b"/>
+<circle cx="457.0" cy="77.0" r="3.5" fill="#d9822b"/>
+<circle cx="478.5" cy="77.1" r="3.5" fill="#d9822b"/>
+<circle cx="500.0" cy="76.8" r="3.5" fill="#d9822b"/>
+<circle cx="521.5" cy="76.9" r="3.5" fill="#d9822b"/>
+<line x1="543.0" y1="60" x2="543.0" y2="34" stroke="#d9822b" stroke-width="2"/><path d="M538.0,38 L543.0,30 L548.0,38 z" fill="#d9822b"/>
+<text x="535.0" y="44" text-anchor="end" fill="#d9822b" font-size="11">wild reading: 2,600 g, off the chart,</text><text x="535.0" y="58" text-anchor="end" fill="#d9822b" font-size="11">ignored by the median</text>
+<circle cx="564.5" cy="76.9" r="3.5" fill="#d9822b"/>
+<circle cx="586.0" cy="77.0" r="3.5" fill="#d9822b"/>
+<circle cx="607.5" cy="77.0" r="3.5" fill="#d9822b"/>
+<circle cx="629.0" cy="76.8" r="3.5" fill="#d9822b"/>
+<circle cx="650.5" cy="77.0" r="3.5" fill="#d9822b"/>
+<circle cx="672.0" cy="76.9" r="3.5" fill="#d9822b"/>
+<line x1="543.0" y1="70" x2="543.0" y2="250" stroke="#1c2b33" stroke-dasharray="3,3"/><circle cx="543.0" cy="76.9" r="6" fill="none" stroke="#1c2b33" stroke-width="2"/>
+<text x="551.0" y="140" fill="#1c2b33" font-size="11">first steady value:</text><text x="551.0" y="155" fill="#1c2b33" font-size="11">412.1 g at 2.2 s</text>
+<line x1="285.0" y1="70" x2="285.0" y2="250" stroke="#d9822b" stroke-dasharray="3,3"/><text x="279.0" y="120" text-anchor="end" fill="#d9822b" font-size="11">item put</text><text x="279.0" y="134" text-anchor="end" fill="#d9822b" font-size="11">down, 1.0 s</text>
+<text x="414" y="235" text-anchor="middle" fill="#1c2b33" font-size="11">1.2 s</text><line x1="285.0" y1="240" x2="543.0" y2="240" stroke="#1c2b33"/>
+<circle cx="430" cy="200" r="3.5" fill="#d9822b"/><text x="440" y="204" fill="#1c2b33" font-size="11">raw reading in grams</text><line x1="424" y1="218" x2="436" y2="218" stroke="#0f7c8c" stroke-width="2.5"/><text x="440" y="222" fill="#1c2b33" font-size="11">cleaned (median of 5)</text>
+<text x="370" y="290" text-anchor="middle" fill="#1c2b33" font-size="12">time</text>
+</svg>
+<figcaption>Figure 13.2. The filter at work, from the made-up run in weight_filter.py. The orange dots are raw readings converted to grams; the teal line is the cleaned value (median of 5). The tomato lands at 1.0 s and wobbles; the median follows with a short delay and ignores the wild 2,600 g reading at 2.2 s. The first steady value, 412.1 g, comes 1.2 s after the item was put down.</figcaption>
+</figure>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>On the real kiosk, over 50 placements of items from 80 g to 1.5 kg, the first steady value came on average 1.2 s after the item touched the tray (fastest 1.0 s, slowest 2.1 s for a rolling lemon).</p></div>
+
+<h2>The cost: 1.2 s of waiting</h2>
+<p>The filter is not free. The 1.2 s from Figure 13.2 has three parts: about 0.3 s for the median to switch to the new weight (3 of the 5 readings must be new), about 0.1 s for the tray to stop wobbling in this example, and then 0.8 s for 8 cleaned readings to agree. The last part dominates and it is deliberate: it is the stillness I demand before trusting the weight.</p>
+<p>I accept the delay because the opposite mistake is worse. A price taken while the item is still rocking is wrong, and a customer who sees a wrong price stops trusting the kiosk. 1.2 s feels like a natural pause, about the time it takes to let go of the item and look at the screen.</p>
+
+<h2>Zero drift and automatic re-tare</h2>
+<p>Over time the empty-tray reading creeps. Temperature changes the gauges and the HX711 a little, and the bar slowly relaxes. This slow change of zero is called drift.</p>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>With the tray left empty for 4 hours, the zero drifted by about 1 g per hour, most of it in the first hour after switching on, while the Pi and the HX711 warmed up.</p></div>
+<p>1 g per hour is small, but over a working day it would add up to several grams. So the filter re-tares by itself. When the tray has been empty and steady for 5 s (50 readings with a steady weight below 10 g), the current median becomes the new offset.</p>
+<pre><code>def _auto_retare(self):
+    if self.steady and abs(self.weight) &lt; ITEM_OFF_G:
+        self.empty_count += 1
+        if self.empty_count &gt;= RETARE_AFTER:
+            self.offset = float(median(self.raw))   # the tray is empty: this is zero now
+            self.clean.clear()
+            self.empty_count = 0
+    else:
+        self.empty_count = 0</code></pre>
+<div class="box why"><div class="label">Why only when empty AND steady for 5 s?</div><p>Re-taring with an item on the tray would make that item weigh nothing, which would be a costly bug. The rule needs a weight below 10 g (the "item removed" threshold) and steadiness for a full 5 s, a state that only happens when the tray is truly empty and nobody is touching it. Between customers this happens all the time, so the zero stays fresh without anyone pressing a button.</p></div>
+<p>Two more thresholds come from the same thinking. The app considers an item present when the cleaned weight rises above 20 g, and removed when it falls below 10 g. The gap between them stops the app from flickering between "item" and "no item" when the weight hovers around one number. This trick is called hysteresis.</p>
+
+<h2>Other things that make a scale wrong</h2>
+<table>
+<thead><tr><th>Problem</th><th>What happens</th><th>What I saw (predicted)</th><th>What I did</th></tr></thead>
+<tbody>
+<tr><td>Off-centre load</td><td>An item at the edge of the tray twists the bar slightly and reads a little high or low</td><td>A 500 g weight at each corner read between 498.4 g and 501.6 g</td><td>The tray is centred on the cell and only 25 cm wide; the screen asks to place items in the middle</td></tr>
+<tr><td>Creep</td><td>Under a constant load the bar keeps bending very slowly</td><td>A 2 kg load left for 10 minutes read 0.8 g more at the end</td><td>Nothing: an item stays on the tray for a few seconds, so creep never matters</td></tr>
+<tr><td>Vibration</td><td>Tapping the table or a passing trolley shakes the tray</td><td>Readings jumped by up to 15 g for half a second</td><td>The steady rule waits until it stops; no price is taken while it shakes</td></tr>
+<tr><td>Something touching the tray</td><td>Part of the weight goes into the frame</td><td>A cable resting on the tray made a 500 g weight read 470 g</td><td>The 5 mm gap and cable routing of chapter 4</td></tr>
+<tr><td>Temperature</td><td>Zero moves as the electronics warm up</td><td>About 1 g per hour</td><td>Automatic re-tare</td></tr>
+</tbody>
+</table>
+
+<h2>How accurate is it? The check-weight test</h2>
+<p>Finally I tested the finished scale with known weights from a kitchen weight set. Each weight was placed in the middle of the tray five times; I recorded the steady weight each time and took the average.</p>
+<table>
+<thead><tr><th>Check weight</th><th>Kiosk reading (average of 5)</th><th>Error</th></tr></thead>
+<tbody>
+<tr><td>100 g</td><td>100.6 g</td><td>+0.6 g</td></tr>
+<tr><td>500 g</td><td>499.2 g</td><td>-0.8 g</td></tr>
+<tr><td>1,000 g</td><td>1,002.0 g</td><td>+2.0 g</td></tr>
+<tr><td>2,000 g</td><td>1,998.6 g</td><td>-1.4 g</td></tr>
+</tbody>
+</table>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>Across 100 g, 500 g, 1 kg and 2 kg check weights the error was within 2 g everywhere, the worst being +2.0 g at 1 kg. At the price of the dearest item (Apple, Rs 240 per kg), 2 g is about 48 paise.</p></div>
+<div class="box careful"><div class="label">Be careful</div><p>Within 2 g is good for a hobby scale and fine for a project demo. It is not legal for trade. In India a scale used to sell goods by weight must be an approved, verified and stamped instrument under the Legal Metrology rules. My kiosk is a working prototype of the idea, and chapter 20 lists "a certified scale" as a requirement for a real shop.</p></div>
+
+<div class="box tip"><div class="label">Interview tip</div><p>"How did you get stable weights?" My answer: "Three steps. Calibrate with tare plus one known weight, a straight line, 431 counts per gram. Clean every reading with a median of the last 5, which removes the wild readings from the Linux timing problem. Then call the weight steady only when the last 8 cleaned values agree within 2 grams, and bill their average. It costs about 1.2 seconds per item, and the scale is within 2 grams from 100 grams to 2 kilos."</p></div>
+
+<div class="box story"><div class="label">Design story</div><p>Version 1 had no calibration file: the factor 430 was typed into the ESP8266 firmware, and the scale was tared only when the ESP8266 started. If the zero drifted during a demo, the only fix was to restart the board. Version 2 keeps offset and counts_per_gram in config.json, written by a calibration script, and re-tares by itself between customers.</p></div>
+</section>

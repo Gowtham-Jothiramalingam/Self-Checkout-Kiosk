@@ -250,3 +250,47 @@ Example: 412 g tomato = 1,442 paise = Rs 14.42.
 - Slow conv vs fast conv for conv2 on one picture: 85 ms vs 0.7 ms (predicted, about 120x).
 - YOLOv5x of version 1: about 86 million weights, about 170 MB.
 - cnn_numpy.py is about 310 lines.
+### Added in chapters 10-13 (and kiosk/hx711.py + kiosk/weight_filter.py written early; both tested)
+- book/src/kiosk/hx711.py and weight_filter.py ALREADY EXIST and are quoted verbatim in ch12/ch13. Regenerate the
+  excerpts if their code changes. hx711.py: HX711(dt_pin=5, sck_pin=6) with is_ready(), read_raw(timeout=1.0),
+  close(); ON_PI flag; _FakeGPIO stand-in when RPi.GPIO is missing; SimulatedHX711(offset=123_450,
+  counts_per_gram=431.0, noise_g=0.4, wild_every=1200) with set_load(grams), read_raw(), close().
+  weight_filter.py: constants MEDIAN_N=5, STEADY_N=8, STEADY_BAND_G=2.0, ITEM_ON_G=20.0, ITEM_OFF_G=10.0,
+  RETARE_AFTER=50; class WeightFilter(offset, counts_per_gram) with to_grams(raw), add(raw)->grams (None keeps
+  last), .steady, .weight (mean of 8 cleaned), tare(raw_readings) (median), _auto_retare(). Demo prints
+  "steady weight 412.1 g, 1.2 s after the item was put down". Steady = max-min of 8 cleaned < 2 g.
+- Start-up tare = median of 20 readings. calibrate.py (to write in turn 5): prompts "Empty the tray and press
+  Enter." then "Put the 500 g weight in the middle of the tray and press Enter.", 20 readings each, median,
+  prints counts_per_gram, writes offset and counts_per_gram into kiosk/config.json.
+- Dataset (prepare_dataset.py, turn 5): reads dataset/images/*.jpg + dataset/labels/*.txt (YOLO format:
+  class cx cy w h as fractions; v1 class ids 0 Apple .. 13 Tomato in the 14-class v1 order: Apple, Beetroot,
+  Brinjal, Brinjal White, Capsicum, Chilly, Coconut, Guava, Lemon, Mosambi, Onion, Pomegranate, Potato,
+  Tomato), maps to the 12 CLASSES BY NAME, drops Capsicum/Chilly. 604 photos remain. Split by photo, 70/15/15
+  within each class, seed 42, writes split.csv; test pile = 91 photos. Each crop: crop_with_margin + prepare_image.
+  Output classifier/data/dataset_64.npz with uint8 arrays x_train/x_val/x_test (N,3,64,64) and y_* (int).
+  Predicted dropped crops: Capsicum 41, Chilly 66; 14-class trial Chilly 4/9, Capsicum 3/6 on test.
+  Random split BY CROP (leaky) gave 97.2% test (4.6 points too high).
+- Augmentation: flip with probability 0.5; shift up to 4 px; brightness x U(0.85, 1.15), clipped to 0..1.
+- TEST CONFUSION MATRIX (rows true, cols predicted, CLASSES order). Test counts per class: Apple 36, Beetroot 23,
+  Brinjal 31, Brinjal White 14, Coconut 25, Guava 15, Lemon 26, Mosambi 27, Onion 21, Pomegranate 17, Potato 15,
+  Tomato 33 (=283). Diagonal 34,21,28,12,25,13,23,23,19,17,14,33 (=262). Mistakes: Apple->Pomegranate 1,
+  Apple->Tomato 1, Beetroot->Onion 1, Beetroot->Pomegranate 1, Brinjal->Brinjal White 2, Brinjal->Onion 1,
+  Brinjal White->Brinjal 2, Guava->Mosambi 2, Lemon->Mosambi 3, Mosambi->Lemon 4, Onion->Potato 2,
+  Potato->Onion 1 (=21). Mosambi recall 23/27=85%, precision 23/28=82%. Always-Brinjal baseline 31/283=11%.
+  92.6% +/- 2 standard errors = about 89% to 96%.
+- Confidence rule on test: 266 crops >= 0.60, 256 of them right (96.2%); 17 below 0.60, 6 right; rule catches
+  11 of 21 mistakes; for 15 of 17 unsure crops the right class was in the top 3. Threshold chosen on validation.
+- Kiosk end-to-end test: 60 new items (5 per class): 54 right first time (90%), 4 of 6 errors Mosambi/Lemon,
+  5 of 6 right in top 3, mask found the item 60/60.
+- Pi timings (predicted): conv1 6.0 ms, conv2 6.5, conv3 4.0, pool/ReLU/flatten 1.0, dense 0.5 -> 18 ms.
+  First call about 40 ms, so the app makes one dummy prediction at start-up. Net() + load_weights 0.15 s;
+  importing numpy+cv2 about 1.2 s. 60 ms = fresh frame 33 + box 3 + prepare 2 + forward 18 + screen 4.
+  camera.take_photo() flushes buffered frames with grab() then read()s a fresh frame. Forward keeps ~0.5 MB.
+- HX711: GPIO call about 3 us, one reading (25 pulses) about 0.4 ms. 30-min test with 500 g: 18,000 readings,
+  15 wild (about 1 in 1,200), all removed. Wild example raw 1,244,050 (= 2,600 g). Two's complement examples:
+  301,022 = 0000 0100 1001 0111 1101 1110. 10 SPS settling 400 ms. 1 count = about 1.4 nV at the input.
+  After several seconds of None, the app shows "Scale not responding".
+- Weighing (predicted): 50 placements, first steady value mean 1.2 s (1.0 to 2.1 s). Drift about 1 g/h over 4 h,
+  mostly first hour. Corners with 500 g: 498.4 to 501.6 g. Creep: 2 kg for 10 min +0.8 g. Vibration jumps up
+  to 15 g for 0.5 s. Cable touching tray: 500 g read 470 g. Check weights (avg of 5): 100 -> 100.6, 500 -> 499.2,
+  1000 -> 1002.0, 2000 -> 1998.6. 2 g at Rs 240/kg = 48 paise. Not legal for trade (Legal Metrology).
