@@ -1,0 +1,589 @@
+<section class="chapter" id="ch14">
+<h1><span class="num">14</span> Price, bill and the touchscreen app</h1>
+<p class="small">Short version: prices come from a small CSV file. Every price is worked out and added in whole paise, never in decimal rupees, so the total is always exact. The app is a Tkinter window that runs a short function, the tick, 10 times a second. The tick reads the scale once and moves the app through five states: Waiting, Settling, Identifying, Showing and Remove. The weight starts the camera, and a "Wrong item" button lets the customer fix the 7 in 100 items the network gets wrong.</p>
+
+<h2>The price table: prices.csv</h2>
+<p>The price of each item, in rupees per kilogram, lives in a plain text file, <code>kiosk/prices.csv</code>. CSV means comma-separated values: one line per row, with commas between the columns. Any spreadsheet program can open and edit it.</p>
+<pre><code>item,rupees_per_kg
+Apple,240
+Beetroot,50
+Brinjal,40
+Brinjal White,40
+Coconut,80
+Guava,80
+Lemon,90
+Mosambi,140
+Onion,25
+Pomegranate,210
+Potato,60
+Tomato,35</code></pre>
+<p>The prices are the ones from version 1's price file, without Capsicum and Chilly. The function <code>load_prices</code> reads the file into a Python dictionary, so <code>prices["Tomato"]</code> gives 35. At start-up, <code>check_prices</code> makes sure every one of the 12 classes has a price. If one is missing, the app stops at once with a clear message, instead of crashing later in front of a customer.</p>
+<pre><code>def load_prices(path):
+    """Read prices.csv into a dictionary {"Tomato": 35, ...} of whole rupees per kg."""
+    prices = {}
+    with open(path, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            prices[row["item"].strip()] = int(row["rupees_per_kg"])
+    return prices
+
+
+def check_prices(prices, class_names):
+    """Stop at start-up if any class the network knows has no price."""
+    missing = [name for name in class_names if name not in prices]
+    if missing:
+        raise ValueError(f"prices.csv has no price for: {', '.join(missing)}")</code></pre>
+<div class="box why"><div class="label">Why a file and not prices in the code?</div><p>Prices change every week in a vegetable shop. The person who changes them should not need to edit Python. With a CSV file, a shopkeeper can change "35" to "40" in any text editor or spreadsheet, and the kiosk uses the new price after a restart. It also keeps the code the same in every shop: only the price file differs.</p></div>
+<p>Prices are whole rupees per kilogram. That matches how produce is priced in Indian shops, and it keeps every later calculation in whole numbers.</p>
+
+<h2>Money in paise, and why</h2>
+<p>A paisa is one hundredth of a rupee. Instead of storing "Rs 14.42", the kiosk stores the whole number 1,442. Every price is calculated in paise, every sum is a sum of paise, and the only time rupees appear is when a number is printed on the screen.</p>
+<h3>The float trap</h3>
+<p>Computers store decimal numbers such as 8.78 as floats: binary fractions with a fixed number of digits. Most decimal fractions cannot be written exactly in binary, just as 1/3 cannot be written exactly in decimal (0.3333...). So 8.78 is stored as a number extremely close to 8.78, but not equal to it. The tiny errors are invisible one at a time, and then show up when numbers are added:</p>
+<pre><code>&gt;&gt;&gt; 0.1 + 0.2
+0.30000000000000004
+&gt;&gt;&gt; 8.78 + 6.3                 # a beetroot and an onion
+15.079999999999998
+&gt;&gt;&gt; 14.42 + 12.15 + 31.2       # three bill lines
+57.769999999999996</code></pre>
+<p>Printed with two decimals, 15.079999999999998 still shows as 15.08, so the bug hides. But comparisons fail ("is the total equal to 15.08?" says no), and in a long day of bills rounding each line in different places can make the till disagree with the bills by a paisa here and there. In accounting, a total that is off by one paisa is a wrong total.</p>
+<div class="box why"><div class="label">Why whole paise fix it</div><p>Whole numbers are stored exactly. 878 + 630 is exactly 1,508, every time, on every computer. By turning each line into whole paise once, at the moment it is priced, and adding only whole numbers from then on, the total can never drift. This is how banks and payment systems handle money too: in the smallest unit, as whole numbers.</p></div>
+
+<h3>The price formula</h3>
+<p>A price per kilogram times a weight in grams, in paise, is:</p>
+<pre><code>paise = grams x rupees_per_kg x 100 / 1000
+
+412 g of tomato at Rs 35/kg:   412 x 35 x 100 / 1000 = 1,442 paise = Rs 14.42</code></pre>
+<p>The "x 100" turns rupees into paise and the "/ 1000" turns kilograms into grams. The weight is first rounded to whole grams, because the bill shows whole grams and should charge exactly what it shows. The result can still end in half a paisa (for example 1,033 g of onion at Rs 25/kg is 2,582.5 paise), so the function rounds that half up.</p>
+<pre><code>def price_paise(grams, rupees_per_kg):
+    """Price of `grams` (rounded to whole grams) at `rupees_per_kg`, in whole paise.
+
+    paise = grams x rupees_per_kg x 100 / 1000, rounded half up. All whole numbers.
+    """
+    g = int(round(grams))                     # the bill shows and charges whole grams
+    return (g * rupees_per_kg * 100 + 500) // 1000
+
+
+def rupees(paise):
+    """1442 -&gt; 'Rs 14.42'. Paise become rupees only when they are shown."""
+    return "Rs " + money(paise)</code></pre>
+<p>Adding 500 before dividing by 1,000 with <code>//</code> (whole-number division, which drops the remainder) is a classic way to round half up using only whole numbers. <code>rupees</code> prints paise as rupees by splitting them into <code>paise // 100</code> rupees and <code>paise % 100</code> paise (<code>%</code> gives the remainder), so even printing never touches a float.</p>
+<div class="box careful"><div class="label">Be careful</div><p>Python's own <code>round()</code> rounds an exact half to the nearest even number: <code>round(2582.5)</code> gives 2582 but <code>round(2583.5)</code> gives 2584. This "banker's rounding" is fair on average, but it surprises customers who learned "half rounds up" at school. My price function does not use <code>round()</code> for paise; it uses the add-500 trick so a half paisa always rounds up.</p></div>
+
+<h2>The Bill class</h2>
+<p>The bill is a list of lines. Each line holds the name, the whole grams, the rupees per kilogram and the price in paise.</p>
+<pre><code>class Bill:
+    """The customer's bill: a list of lines and a total, all in paise."""
+
+    def __init__(self):
+        self.lines = []                       # each line: (name, grams, rupees_per_kg, paise)
+
+    def add(self, name, grams, rupees_per_kg):
+        line = (name, int(round(grams)), rupees_per_kg, price_paise(grams, rupees_per_kg))
+        self.lines.append(line)
+        return line
+
+    def remove_last(self):
+        if self.lines:
+            self.lines.pop()
+
+    def clear(self):
+        self.lines = []
+
+    @property
+    def total_paise(self):
+        return sum(line[3] for line in self.lines)
+
+    def text(self):
+        """The bill as lines of text, the same layout the screen shows."""
+        rows = [f"{'Item':&lt;14}{'Grams':&gt;7}{'Rs/kg':&gt;7}{'Rs':&gt;9}"]
+        for name, g, rpk, p in self.lines:
+            rows.append(f"{name:&lt;14}{g:&gt;7}{rpk:&gt;7}{money(p):&gt;9}")
+        rows.append("-" * 37)
+        rows.append(f"{'Total':&lt;28}{money(self.total_paise):&gt;9}")
+        return "\n".join(rows)</code></pre>
+<p><code>total_paise</code> is a property that adds up the last column. It is worked out fresh every time it is read, so it can never disagree with the lines. <code>text()</code> lays the bill out in fixed-width columns. Running <code>python3 bill.py</code> checks the small examples at the top of the file and prints a sample bill:</p>
+<pre><code>doctest failures: 0
+Item            Grams  Rs/kg       Rs
+Tomato            412     35    14.42
+Onion            1033     25    25.83
+Apple             618    240   148.32
+Lemon              97     90     8.73
+-------------------------------------
+Total                          197.30
+total: Rs 197.30</code></pre>
+<div class="box story"><div class="label">Design story</div><p>Version 1 calculated each cost as <code>grams * price * 0.001</code>, rounded it to two decimals, and added the costs as floats. It usually looked right because every number was printed with two decimals. The paise design came from asking a simple question: "can the total ever be off by a paisa?" With floats the honest answer was "rarely, but yes". With whole paise it is "never".</p></div>
+
+<h2>The state loop</h2>
+<p>The app is always in exactly one state, and each state has its own screen and its own rules for what happens next. This design is called a state machine. It turns a messy question ("what should the app do when the weight changes?") into small, separate questions ("what should the Settling state do when the weight changes?").</p>
+<table>
+<thead><tr><th>State</th><th>Screen</th><th>Leaves when</th></tr></thead>
+<tbody>
+<tr><td>Waiting</td><td>"Place an item"; "Finish" if the bill has lines</td><td>weight rises above 20 g: go to Settling. "Finish": go to Bill</td></tr>
+<tr><td>Settling</td><td>the live weight, "Weighing, please wait"</td><td>weight steady: go to Identifying. Weight below 10 g: back to Waiting</td></tr>
+<tr><td>Identifying</td><td>(lasts about 60 ms, no screen of its own)</td><td>top chance 0.60 or more: Showing. Below 0.60, or no item found: Choose</td></tr>
+<tr><td>Showing</td><td>name, grams, Rs/kg, price; "Add to bill", "Wrong item"</td><td>"Add to bill": Remove. "Wrong item": Choose. Item lifted off: Waiting (nothing billed)</td></tr>
+<tr><td>Choose</td><td>top 3 guesses as buttons, "Other items" for all 12</td><td>an item is tapped: it is added, go to Remove</td></tr>
+<tr><td>Remove</td><td>"Take the item off", and what was just added</td><td>weight below 10 g: Waiting</td></tr>
+<tr><td>Bill</td><td>the itemised bill and total; "Back", "New customer"</td><td>"Back": Waiting. "New customer": clear the bill, Waiting</td></tr>
+</tbody>
+</table>
+
+<figure>
+<svg width="700" height="340" viewBox="0 0 700 340" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<defs><marker id="a141" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1c2b33"/></marker></defs>
+<g text-anchor="middle">
+<rect x="20" y="40" width="120" height="50" rx="25" fill="#e9f3f6" stroke="#0f7c8c" stroke-width="2"/><text x="80" y="70" fill="#1c2b33">Waiting</text>
+<rect x="200" y="40" width="120" height="50" rx="25" fill="#e9f3f6" stroke="#0f7c8c" stroke-width="2"/><text x="260" y="70" fill="#1c2b33">Settling</text>
+<rect x="380" y="40" width="120" height="50" rx="25" fill="#fdf0e2" stroke="#d9822b" stroke-width="2"/><text x="440" y="70" fill="#1c2b33">Identifying</text>
+<rect x="560" y="40" width="120" height="50" rx="25" fill="#e9f3f6" stroke="#0f7c8c" stroke-width="2"/><text x="620" y="70" fill="#1c2b33">Showing</text>
+<rect x="380" y="200" width="120" height="50" rx="25" fill="#e9f3f6" stroke="#0f7c8c" stroke-width="2"/><text x="440" y="230" fill="#1c2b33">Choose</text>
+<rect x="560" y="200" width="120" height="50" rx="25" fill="#e9f3f6" stroke="#0f7c8c" stroke-width="2"/><text x="620" y="230" fill="#1c2b33">Remove</text>
+<rect x="20" y="200" width="120" height="50" rx="25" fill="#f4f6f7" stroke="#5b7083" stroke-width="2"/><text x="80" y="230" fill="#1c2b33">Bill</text>
+</g>
+<g stroke="#1c2b33" fill="none" marker-end="url(#a141)">
+<line x1="140" y1="58" x2="198" y2="58"/><line x1="198" y1="74" x2="140" y2="74"/>
+<line x1="320" y1="65" x2="378" y2="65"/>
+<line x1="500" y1="65" x2="558" y2="65"/>
+<line x1="440" y1="90" x2="440" y2="198"/>
+<line x1="590" y1="90" x2="482" y2="200"/>
+<line x1="650" y1="90" x2="650" y2="198"/>
+<line x1="500" y1="225" x2="558" y2="225"/>
+<path d="M620,250 L620,274 L170,274 L170,118 L140,90"/>
+<line x1="70" y1="92" x2="70" y2="198"/><line x1="90" y1="198" x2="90" y2="92"/>
+</g>
+<g font-size="11" fill="#5b7083">
+<text x="169" y="50" text-anchor="middle">above 20 g</text><text x="169" y="88" text-anchor="middle">below 10 g</text>
+<text x="349" y="56" text-anchor="middle">steady</text>
+<text x="529" y="56" text-anchor="middle">&gt;= 0.60</text>
+<text x="434" y="140" text-anchor="end">below 0.60</text><text x="434" y="154" text-anchor="end">or no item</text>
+<text x="549" y="150">"Wrong</text><text x="549" y="164">item"</text>
+<text x="656" y="140">"Add to</text><text x="656" y="154">bill"</text>
+<text x="529" y="216" text-anchor="middle">tapped</text>
+<text x="395" y="290" text-anchor="middle">below 10 g</text>
+<text x="20" y="150">"Finish"</text><text x="98" y="175">"Back",</text><text x="98" y="189">"New customer"</text>
+</g>
+<text x="350" y="22" text-anchor="middle" fill="#1c2b33">The app's states and what moves it from one to the next</text>
+<text x="350" y="314" text-anchor="middle" fill="#5b7083" font-size="11">Not drawn: from Showing or Choose, lifting the item off (below 10 g) goes straight back to Waiting with nothing billed;</text>
+<text x="350" y="330" text-anchor="middle" fill="#5b7083" font-size="11">a steady weight more than 5 g away from the shown item goes back to Settling and weighs again.</text>
+</svg>
+<figcaption>Figure 14.1. The state machine of the app. The weight (teal states) drives the normal path from Waiting through Settling to Showing; the customer's taps drive Showing, Choose and Bill. Identifying (orange) is the only place the camera and the CNN are used.</figcaption>
+</figure>
+
+<h2>Why the weight starts the camera</h2>
+<p>The weight is the trigger for everything. The kiosk never asks "is there something in the camera's view?"; it asks "has the weight gone up and stayed still?". There are four reasons.</p>
+<ol>
+<li><b>The right moment.</b> A steady weight means the item is down, has stopped rolling, and the hand has left. That is exactly when a photo shows the item clearly and alone.</li>
+<li><b>One photo per item.</b> The CNN runs once per item instead of 30 times a second, which keeps the Pi cool and idle between customers.</li>
+<li><b>No false triggers.</b> A hand waving over the tray, a shadow or a dropped receipt changes the picture but not the weight (or not by 20 g).</li>
+<li><b>The weight is needed anyway.</b> The price needs a steady weight, so waiting for it costs nothing extra.</li>
+</ol>
+
+<h2>Why "Wrong item" exists</h2>
+<p>The network is right 92.6% of the time on test crops. That means about 7 in every 100 items would be named wrongly if the app simply trusted it. Two features handle this. Below a top chance of 0.60, the app does not guess at all: it shows "Not sure, please choose" with the top 3 guesses. Above 0.60, it shows its answer but always with a "Wrong item" button next to "Add to bill". Both lead to the same Choose screen: the top 3 guesses as big buttons, which for a mosambi nearly always includes Lemon, and "Other items" for the full list of 12.</p>
+<div class="box why"><div class="label">Why not just make the network better?</div><p>Even a much better network would make some mistakes, and a mistake on a bill costs real money and trust. The honest design accepts that the model is sometimes wrong and makes the correction cheap: one tap, with the right answer usually already on screen. In my 60-item kiosk test, the right item was in the top 3 for 5 of the 6 wrong first answers. A human in the loop for 7% of items is a good trade for a kiosk that handles the other 93% alone.</p></div>
+<div class="box careful"><div class="label">Be careful</div><p>The "Wrong item" button also lets a dishonest customer choose a cheaper item on purpose: weigh pomegranates, tap "Wrong item", pick Onion. My kiosk trusts the customer, like many self-checkouts. A shop version would log every correction with its photo for a staff member to check (chapter 20).</p></div>
+
+<h2>Tkinter in plain words</h2>
+<p>Tkinter is the window toolkit that comes with Python. It draws windows, text labels and buttons, and it tells my program when a button is pressed. On the Pi it comes from the <code>python3-tk</code> package.</p>
+<p>A Tkinter program works differently from a script that runs top to bottom. After building the window, the program calls <code>root.mainloop()</code> and hands control to Tkinter. The main loop waits for events (a tap, a key, a timer), runs the small function connected to each event, redraws the screen, and waits again. My code never runs "in the background": it only runs inside these short functions, called by the main loop.</p>
+<p>The weight, though, changes without any event. To check the scale regularly, I ask Tkinter for a timer event: <code>root.after(100, tick)</code> means "in 100 ms, call tick". At the end of every tick, the tick asks for the next one. So the tick runs 10 times a second, forever, and between ticks Tkinter is free to handle taps and redraw the screen.</p>
+<pre><code>def tick(self):
+    """Runs every 100 ms: one scale reading, one filter update, one state step."""
+    try:
+        raw = self.scale.read_raw(timeout=0) if self.scale.is_ready() else None
+        self.no_reading = 0 if raw is not None else self.no_reading + 1
+        grams = self.filter.add(raw)
+        self.status.config(text="Scale not responding" if self.no_reading &gt; NO_READING_LIMIT else "")
+        self.step(grams)
+    except Exception:
+        traceback.print_exc()                    # keep the kiosk alive; the log shows what happened
+    finally:
+        self.root.after(TICK_MS, self.tick)</code></pre>
+<p>Each tick checks whether the HX711 has a reading waiting (<code>is_ready()</code>), reads it if so, feeds it to the filter and calls <code>step</code>, which is the state machine of Figure 14.1. The <code>finally</code> block makes sure the next tick is always booked, even if something in this tick fails, and the <code>except</code> prints the error to the log without stopping the kiosk.</p>
+<pre><code>def step(self, grams):
+    s, f = self.state, self.filter
+    if s == WAITING:
+        if grams &gt; self.on_g:
+            self.go(SETTLING)
+    elif s == SETTLING:
+        self.big.config(text=f"{grams:.0f} g")   # live weight
+        if grams &lt; self.off_g:
+            self.go(WAITING)                     # it was lifted off again
+        elif f.steady:
+            self.identify()
+    elif s in (SHOWING, CHOOSING):
+        if grams &lt; self.off_g:
+            self.go(WAITING)                     # taken off without adding: nothing is billed
+        elif f.steady and abs(f.weight - self.item["grams"]) &gt; CHANGED_G:
+            self.go(SETTLING)                    # something was added or swapped: weigh again
+    elif s == REMOVE:
+        if grams &lt; self.off_g:
+            self.go(WAITING)</code></pre>
+
+<h3>The classic mistake: while True</h3>
+<p>The natural first idea for reading a scale forever is a loop:</p>
+<pre><code>while True:                      # DO NOT do this in a Tkinter app
+    grams = filter.add(scale.read_raw())
+    label.config(text=f"{grams:.0f} g")</code></pre>
+<p>In a Tkinter app this freezes the window completely. The loop never returns to the main loop, so Tkinter never gets a chance to draw the new text or notice a tap. The screen shows whatever was there when the loop started, and buttons do nothing. The fix is exactly the tick: do one small piece of work, return, and ask to be called again.</p>
+<div class="box why"><div class="label">Why does the CNN run inside the tick?</div><p>While the tick runs, the screen cannot react, so long work inside a tick is normally avoided. The photo and the CNN take about 60 ms once per item, and the screen is about to change anyway. A 60 ms pause is shorter than a blink. Moving the CNN to a separate thread would add locks and shared-state problems for no visible gain.</p></div>
+
+<h3>Identifying, in code</h3>
+<pre><code>def identify(self):
+    """One photo, one prediction. Called once per item, when the weight is steady."""
+    self.state = IDENTIFYING
+    guesses = None
+    photo = self.camera.take_photo()
+    box = camera.find_item_box(photo) if photo is not None else None
+    if box is not None:
+        x = prepare_image(crop_with_margin(photo, box))
+        guesses = top_k(self.net, x, 3)
+    else:
+        self.status.config(text="Could not see the item, please choose")
+    self.item = {"grams": self.filter.weight, "guesses": guesses}
+    if guesses and guesses[0][1] &gt;= self.threshold:
+        self.go(SHOWING)
+    else:
+        self.go(CHOOSING)</code></pre>
+<p>This is the only place the camera and the network are used. If the photo fails or the colour mask finds nothing, there are no guesses, and the Choose screen opens with the full list and a message. The customer can always finish the purchase, even if the camera is covered.</p>
+
+<h2>Fullscreen, 800 x 480, big buttons</h2>
+<p>The app fills the whole 7-inch screen with <code>attributes("-fullscreen", True)</code>, and hides the mouse pointer, which has no use on a touchscreen. There is no title bar, no desktop and no way for a customer to reach another program. The layout has three parts: a teal bar at the top with the item count and the running total, a large middle area for the current screen, and a thin status line at the bottom for messages such as "Scale not responding".</p>
+<div class="box why"><div class="label">Why big buttons and no typing?</div><p>A fingertip covers about 1 cm of screen. On a 7-inch screen with 800 x 480 pixels, 1 cm is about 50 pixels, so every button is at least 2 cm tall with large bold text and a gap around it. Typing on a small touchscreen keyboard is slow and error-prone, so the kiosk never asks for text: every choice is a button, and the item list has only 12 names.</p></div>
+
+<figure>
+<svg width="700" height="230" viewBox="0 0 700 230" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<g>
+<rect x="10" y="30" width="216" height="130" fill="#f4f7f8" stroke="#5b7083"/><rect x="10" y="30" width="216" height="16" fill="#0f7c8c"/>
+<text x="16" y="42" fill="#ffffff" font-size="9">Self-checkout</text><text x="220" y="42" text-anchor="end" fill="#ffffff" font-size="9">1 item  Rs 14.42</text>
+<text x="118" y="80" text-anchor="middle" fill="#1c2b33" font-size="16" font-weight="bold">Place an item</text>
+<text x="118" y="98" text-anchor="middle" fill="#5b7083" font-size="9">One item, in the middle of the tray</text>
+<rect x="88" y="128" width="60" height="22" fill="#0f7c8c"/><text x="118" y="143" text-anchor="middle" fill="#ffffff" font-size="10">Finish</text>
+<text x="118" y="178" text-anchor="middle" fill="#1c2b33">1. Waiting</text>
+</g>
+<g>
+<rect x="242" y="30" width="216" height="130" fill="#f4f7f8" stroke="#5b7083"/><rect x="242" y="30" width="216" height="16" fill="#0f7c8c"/>
+<text x="248" y="42" fill="#ffffff" font-size="9">Self-checkout</text><text x="452" y="42" text-anchor="end" fill="#ffffff" font-size="9">1 item  Rs 14.42</text>
+<text x="350" y="80" text-anchor="middle" fill="#1c2b33" font-size="16" font-weight="bold">Onion</text>
+<text x="350" y="98" text-anchor="middle" fill="#5b7083" font-size="9">1033 g    Rs 25/kg    Rs 25.83</text>
+<rect x="276" y="128" width="70" height="22" fill="#2f8f4e"/><text x="311" y="143" text-anchor="middle" fill="#ffffff" font-size="10">Add to bill</text>
+<rect x="354" y="128" width="70" height="22" fill="#d9822b"/><text x="389" y="143" text-anchor="middle" fill="#ffffff" font-size="10">Wrong item</text>
+<text x="350" y="178" text-anchor="middle" fill="#1c2b33">2. Showing</text>
+</g>
+<g>
+<rect x="474" y="30" width="216" height="130" fill="#f4f7f8" stroke="#5b7083"/><rect x="474" y="30" width="216" height="16" fill="#0f7c8c"/>
+<text x="480" y="42" fill="#ffffff" font-size="9">Self-checkout</text><text x="684" y="42" text-anchor="end" fill="#ffffff" font-size="9">2 items  Rs 40.25</text>
+<g font-family="DejaVu Sans Mono" font-size="8.5" fill="#1c2b33"><text x="500" y="64">Item       Grams Rs/kg    Rs</text><text x="500" y="76">Tomato       412    35 14.42</text><text x="500" y="88">Onion       1033    25 25.83</text><text x="500" y="98">----------------------------</text><text x="500" y="110">Total                  40.25</text></g>
+<rect x="510" y="128" width="54" height="22" fill="#5b7083"/><text x="537" y="143" text-anchor="middle" fill="#ffffff" font-size="10">Back</text>
+<rect x="572" y="128" width="84" height="22" fill="#2f8f4e"/><text x="614" y="143" text-anchor="middle" fill="#ffffff" font-size="10">New customer</text>
+<text x="582" y="178" text-anchor="middle" fill="#1c2b33">3. Bill</text>
+</g>
+<text x="350" y="18" text-anchor="middle" fill="#1c2b33">Three screens of the app, drawn from the running app (800 x 480 each)</text>
+<text x="350" y="210" text-anchor="middle" fill="#5b7083" font-size="11">Every screen has the same top bar with the running total. Every action is one large button.</text>
+</svg>
+<figcaption>Figure 14.2. Sketches of three screens, copied from the app running with the simulated scale: Waiting with a "Finish" button once the bill has a line, Showing with the two big choices, and the itemised Bill.</figcaption>
+</figure>
+
+<h2>Finish and New customer</h2>
+<p>When the customer has put down their last item, they tap "Finish" on the Waiting screen. The Bill screen shows every line with name, grams, rupees per kilogram and rupees, then the total, in the same fixed-width layout as <code>Bill.text()</code>. While the bill is shown, the app ignores the scale, so leaning on the tray cannot start a new item.</p>
+<p>"Back" returns to Waiting with the bill kept, for a customer who forgot an item. "New customer" clears the bill and returns to Waiting for the next person. In this version, payment happens at the shop's counter or by the shop's own UPI code; the kiosk's job ends with a correct, itemised total.</p>
+<div class="box tip"><div class="label">Interview tip</div><p>Two short answers prepare most app questions. "How does the UI stay responsive while reading a sensor?" "Tkinter's main loop calls a tick every 100 ms with root.after; each tick reads the scale once and returns, so the UI never blocks. A while-True loop would freeze it." And "Why paise?" "Floats can't store 8.78 exactly, so sums drift: 8.78 + 6.3 gives 15.079999999999998. Whole paise are exact, so the total is always exactly the sum of the lines."</p></div>
+</section>
+<section class="chapter" id="ch15">
+<h1><span class="num">15</span> How the program is organised</h1>
+<p class="small">Short version: the kiosk is split into small files, each with one job: the CNN, the HX711, the filter, the camera, the bill and the app that joins them. Most files can be run and tested on a laptop with no hardware. Only hx711.py and camera.py need the real Pi, and even they have stand-ins for laptop demos. The app starts in a fixed order, runs a 10-per-second tick, and treats every failure as something to show on screen, not a reason to crash.</p>
+
+<h2>One file per job</h2>
+<table>
+<thead><tr><th>File</th><th>Job</th><th>Needs the Pi?</th><th>Chapter</th></tr></thead>
+<tbody>
+<tr><td><code>classifier/cnn_numpy.py</code></td><td>Image preparation, every layer forward and backward, the network, predict and top 3</td><td>no</td><td>6 to 9</td></tr>
+<tr><td><code>classifier/prepare_dataset.py</code></td><td>Turn the version 1 photos and boxes into the three piles of 64 x 64 crops</td><td>no (laptop)</td><td>10</td></tr>
+<tr><td><code>classifier/train.py</code></td><td>Train, keep the best epoch, test once, write weights.npz and metrics.json</td><td>no (laptop)</td><td>8, 10</td></tr>
+<tr><td><code>classifier/gradient_check.py</code></td><td>Prove the backward pass is correct</td><td>no</td><td>8, 9</td></tr>
+<tr><td><code>kiosk/hx711.py</code></td><td>Read one 24-bit number from the HX711; a simulated scale for demos</td><td>yes for the real chip</td><td>12</td></tr>
+<tr><td><code>kiosk/weight_filter.py</code></td><td>Raw numbers to steady grams: median, steady rule, auto re-tare</td><td>no</td><td>13</td></tr>
+<tr><td><code>kiosk/calibrate.py</code></td><td>Measure offset and counts per gram with a 500 g weight, write config.json</td><td>yes</td><td>13</td></tr>
+<tr><td><code>kiosk/camera.py</code></td><td>Take one fresh photo; find the item box by colour; a fake camera for demos</td><td>yes for the real camera</td><td>6, 11</td></tr>
+<tr><td><code>kiosk/bill.py</code></td><td>Prices, paise, the Bill class</td><td>no</td><td>14</td></tr>
+<tr><td><code>kiosk/kiosk_app.py</code></td><td>The touchscreen app: start-up, tick, states, screens</td><td>no with <code>--simulate</code></td><td>14, 15</td></tr>
+<tr><td><code>kiosk/prices.csv</code></td><td>Rupees per kilogram for the 12 items</td><td></td><td>14</td></tr>
+<tr><td><code>kiosk/config.json</code></td><td>Calibration and settings</td><td></td><td>13, 15</td></tr>
+</tbody>
+</table>
+<p>The settings file holds every number a shop might need to change without touching code:</p>
+<pre><code>{
+  "offset": 123450,
+  "counts_per_gram": 431.0,
+  "calibrated_with_grams": 500,
+  "camera_index": 0,
+  "confidence_threshold": 0.60,
+  "item_on_grams": 20,
+  "item_off_grams": 10
+}</code></pre>
+<div class="box why"><div class="label">Why so many small files?</div><p>Each file can be understood, tested and replaced alone. If the scale misbehaves, I look at two files (hx711.py and weight_filter.py), not at one 400-line program. If I swap the webcam for the official Pi camera one day, only camera.py changes. And each piece can be explained in an interview in one sentence, which is a good test that the split is right.</p></div>
+
+<h2>Who calls whom</h2>
+<figure>
+<svg width="700" height="320" viewBox="0 0 700 320" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<defs><marker id="a151" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1c2b33"/></marker></defs>
+<rect x="250" y="20" width="200" height="56" rx="6" fill="#fdf0e2" stroke="#d9822b" stroke-width="2"/><text x="350" y="44" text-anchor="middle" fill="#1c2b33">kiosk_app.py</text><text x="350" y="62" text-anchor="middle" fill="#5b7083" font-size="11">start-up, tick, states; reads config.json</text>
+<g text-anchor="middle">
+<rect x="10" y="150" width="125" height="64" rx="6" fill="#e9f3f6" stroke="#0f7c8c"/><text x="72" y="172" fill="#1c2b33">hx711.py</text><text x="72" y="190" fill="#5b7083" font-size="10">is_ready, read_raw</text><text x="72" y="204" fill="#5b7083" font-size="10">(or SimulatedHX711)</text>
+<rect x="148" y="150" width="125" height="64" rx="6" fill="#e9f3f6" stroke="#0f7c8c"/><text x="210" y="172" fill="#1c2b33">weight_filter.py</text><text x="210" y="190" fill="#5b7083" font-size="10">add, steady, weight,</text><text x="210" y="204" fill="#5b7083" font-size="10">tare</text>
+<rect x="286" y="150" width="125" height="64" rx="6" fill="#e9f3f6" stroke="#0f7c8c"/><text x="348" y="172" fill="#1c2b33">camera.py</text><text x="348" y="190" fill="#5b7083" font-size="10">take_photo,</text><text x="348" y="204" fill="#5b7083" font-size="10">find_item_box</text>
+<rect x="424" y="150" width="125" height="64" rx="6" fill="#e9f3f6" stroke="#0f7c8c"/><text x="486" y="172" fill="#1c2b33">cnn_numpy.py</text><text x="486" y="190" fill="#5b7083" font-size="10">crop, prepare, Net,</text><text x="486" y="204" fill="#5b7083" font-size="10">load_weights, top_k</text>
+<rect x="562" y="150" width="125" height="64" rx="6" fill="#e9f3f6" stroke="#0f7c8c"/><text x="624" y="172" fill="#1c2b33">bill.py</text><text x="624" y="190" fill="#5b7083" font-size="10">load_prices, Bill,</text><text x="624" y="204" fill="#5b7083" font-size="10">price_paise, rupees</text>
+<rect x="10" y="250" width="125" height="36" rx="6" fill="#f4f6f7" stroke="#5b7083"/><text x="72" y="273" fill="#1c2b33" font-size="11">GPIO 5, 6 (HX711)</text>
+<rect x="286" y="250" width="125" height="36" rx="6" fill="#f4f6f7" stroke="#5b7083"/><text x="348" y="273" fill="#1c2b33" font-size="11">/dev/video0 (C270)</text>
+<rect x="424" y="250" width="125" height="36" rx="6" fill="#f4f6f7" stroke="#5b7083"/><text x="486" y="273" fill="#1c2b33" font-size="11">weights.npz</text>
+<rect x="562" y="250" width="125" height="36" rx="6" fill="#f4f6f7" stroke="#5b7083"/><text x="624" y="273" fill="#1c2b33" font-size="11">prices.csv</text>
+</g>
+<g stroke="#1c2b33" marker-end="url(#a151)">
+<line x1="290" y1="76" x2="80" y2="148"/><line x1="320" y1="76" x2="215" y2="148"/><line x1="348" y1="76" x2="348" y2="148"/><line x1="380" y1="76" x2="480" y2="148"/><line x1="410" y1="76" x2="618" y2="148"/>
+<line x1="72" y1="214" x2="72" y2="248"/><line x1="348" y1="214" x2="348" y2="248"/><line x1="486" y1="214" x2="486" y2="248"/><line x1="624" y1="214" x2="624" y2="248"/>
+</g>
+<text x="350" y="310" text-anchor="middle" fill="#5b7083" font-size="11">kiosk_app.py is the only file that knows about the others. The five modules never import each other.</text>
+</svg>
+<figcaption>Figure 15.1. The call graph. The app is the only file that calls the others; each of the five modules below it does one job and talks to one thing in the outside world (pins, camera, weights file, price file). That is what makes each one testable alone.</figcaption>
+</figure>
+
+<h2>Start-up order</h2>
+<p>The app does its slow and risky work once, before the first screen, in a fixed order:</p>
+<pre><code>def __init__(self, root, simulate=False, windowed=False):
+    self.root = root
+    self.simulate = simulate
+
+    # 1. Load the weights once. The first forward pass is slow, so do a dummy one now.
+    weights = CLASSIFIER_DIR / "weights.npz"
+    if not weights.exists():
+        sys.exit(f"{weights} not found. Train on the laptop, then copy it with scp.")
+    self.net = Net()
+    self.net.load_weights(weights)
+    top_k(self.net, np.zeros((1, 3, 64, 64), np.float32))
+
+    # 2. Open the camera (it throws away its first dark frames).
+    self.camera = camera.FakeCamera() if simulate else camera.Camera(0)
+
+    # 3. Set up the GPIO pins for the HX711 (or the simulated scale).
+    # 4. Read the calibration and settings, and the price table.
+    self.config = json.loads((HERE / "config.json").read_text(encoding="utf-8"))
+    self.prices = load_prices(HERE / "prices.csv")
+    check_prices(self.prices, CLASSES)
+    self.threshold = float(self.config["confidence_threshold"])
+    self.on_g = float(self.config["item_on_grams"])
+    self.off_g = float(self.config["item_off_grams"])
+    if simulate:
+        self.scale = hx711.SimulatedHX711(self.config["offset"], self.config["counts_per_gram"])
+    else:
+        self.scale = hx711.HX711()
+    self.filter = WeightFilter(self.config["offset"], self.config["counts_per_gram"])
+
+    # 5. Tare: the tray must be empty now.
+    self.filter.tare([self.scale.read_raw() for _ in range(TARE_READINGS)])
+
+    # 6. The window and the first screen, then 7. start the tick.
+    self.bill = Bill()
+    self.item = None             # the item being shown: {"grams": .., "guesses": [(index, chance), ..]}
+    self.state = None
+    self.no_reading = 0
+    self.build_window(windowed)
+    self.go(WAITING)
+    self.root.after(TICK_MS, self.tick)</code></pre>
+<table>
+<thead><tr><th>#</th><th>Step</th><th>Time (predicted)</th><th>Why in this place</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Load weights.npz into a fresh Net; one dummy prediction</td><td>0.2 s</td><td>If the model is missing, stop before touching any hardware. The dummy prediction removes the slow first call.</td></tr>
+<tr><td>2</td><td>Open the camera, throw away 5 warm-up frames</td><td>0.6 s</td><td>The camera needs time for its exposure to settle; doing it now means the first photo is good.</td></tr>
+<tr><td>3</td><td>Set up GPIO 5 and 6 for the HX711</td><td>under 0.1 s</td><td>SCK must be low early, so the HX711 never sees a long high.</td></tr>
+<tr><td>4</td><td>Read config.json and prices.csv; check every class has a price</td><td>under 0.1 s</td><td>Calibration is needed for the filter; a missing price should stop the app now, not at the first customer.</td></tr>
+<tr><td>5</td><td>Tare with 20 readings</td><td>2.0 s</td><td>The tray must be empty; this is the moment nobody is using the kiosk.</td></tr>
+<tr><td>6</td><td>Build the window and show "Place an item"</td><td>0.3 s</td><td>Only now is everything ready to use.</td></tr>
+<tr><td>7</td><td>Book the first tick</td><td></td><td>From here on the app runs only in ticks and button presses.</td></tr>
+</tbody>
+</table>
+<p>Together with importing NumPy and OpenCV (about 1.2 s), the app's own start-up takes about 4 s, inside the 35 s from power-on to first screen given in chapter 5.</p>
+
+<h2>The tick, step by step</h2>
+<p>Every 100 ms, Tkinter calls the tick. One tick does this:</p>
+<ol>
+<li>Ask the HX711 if a reading is waiting. If yes, read it (about 0.4 ms). If no, use <code>None</code>.</li>
+<li>Count ticks without a reading. After 30 in a row (3 s), show "Scale not responding".</li>
+<li>Feed the reading to the filter and get the cleaned grams. The filter also re-tares by itself if the tray has been empty and steady for 5 s.</li>
+<li>Run one step of the state machine with the cleaned grams. In Settling this updates the live weight; when the weight becomes steady it runs <code>identify()</code> once, which takes the photo and runs the CNN.</li>
+<li>Book the next tick in 100 ms, whatever happened above.</li>
+</ol>
+<p>Button presses happen between ticks. Tkinter calls the button's function, which changes the state and draws the new screen, and the next tick continues from the new state.</p>
+<div class="box why"><div class="label">Why check is_ready() instead of waiting for a reading?</div><p><code>read_raw()</code> can wait up to 100 ms for the HX711 to finish a reading. Waiting inside the tick would freeze the screen for that time, 10 times a second. Checking <code>is_ready()</code> first means the tick never waits: if a reading is there, take it; if not, try again next tick. Both the HX711 and the tick run at about 10 per second, so almost every tick finds a fresh reading.</p></div>
+
+<h2>Shared state</h2>
+<p>Everything the app needs to remember lives in a few fields of the one <code>KioskApp</code> object:</p>
+<table>
+<thead><tr><th>Field</th><th>Holds</th><th>Changed by</th></tr></thead>
+<tbody>
+<tr><td><code>state</code></td><td>which of the states the app is in</td><td><code>go()</code> only</td></tr>
+<tr><td><code>filter</code></td><td>the newest readings, offset, counts per gram</td><td>the tick (<code>add</code>), start-up (<code>tare</code>)</td></tr>
+<tr><td><code>item</code></td><td>the weight and the top 3 guesses of the item on the tray</td><td><code>identify()</code></td></tr>
+<tr><td><code>bill</code></td><td>the bill lines</td><td>"Add to bill", Choose, "New customer"</td></tr>
+<tr><td><code>no_reading</code></td><td>ticks in a row without a reading</td><td>the tick</td></tr>
+</tbody>
+</table>
+<p>Because the tick and the button functions all run one at a time inside Tkinter's main loop, they can never change these fields at the same moment. There are no threads, so there is no need for locks. This is the biggest reason I kept the CNN inside the tick and the HX711 at 10 readings per second.</p>
+
+<h2>Error handling</h2>
+<p>A kiosk has no one standing next to it to read an error message in a terminal. So every failure I could think of has a planned reaction that keeps the app usable.</p>
+<table>
+<thead><tr><th>What goes wrong</th><th>What the code does</th><th>What the customer sees</th></tr></thead>
+<tbody>
+<tr><td>HX711 not ready for 1 s (wire loose, chip off)</td><td><code>read_raw</code> returns <code>None</code>; the filter keeps its last value</td><td>nothing for 3 s, then "Scale not responding"</td></tr>
+<tr><td>One wild HX711 reading</td><td>the median of 5 ignores it</td><td>nothing</td></tr>
+<tr><td>Camera read fails</td><td><code>take_photo</code> returns <code>None</code>; no guesses</td><td>"Could not see the item, please choose" and the full item list</td></tr>
+<tr><td>No item found in the photo (for example a hand covers it)</td><td><code>find_item_box</code> returns <code>None</code></td><td>the same Choose screen</td></tr>
+<tr><td>Top chance below 0.60</td><td>no single answer shown</td><td>"Not sure, please choose" with the top 3</td></tr>
+<tr><td>Any unexpected error in a tick</td><td>printed to the log with the full traceback; the next tick still runs</td><td>usually nothing</td></tr>
+<tr><td>The app crashes completely</td><td>systemd restarts it 3 s later (chapter 5)</td><td>the first screen again, after a few seconds</td></tr>
+<tr><td>weights.npz or a price missing at start-up</td><td>the app stops with a clear message in the log</td><td>the kiosk does not start; staff read <code>journalctl</code></td></tr>
+<tr><td>Camera missing at start-up</td><td><code>Camera()</code> raises an error naming /dev/video0</td><td>the same: a clear message in the log</td></tr>
+</tbody>
+</table>
+<div class="box why"><div class="label">Why stop at start-up, but carry on during use?</div><p>At start-up nobody is waiting and nothing has been billed, so a missing file is best reported loudly and at once. During a sale, a customer is standing there with items half scanned. Then the right thing is to keep going with whatever still works: a broken camera still leaves the scale and the item list, so the customer can finish by choosing items by hand.</p></div>
+
+<h2>Testing the pieces alone</h2>
+<p>Most of the kiosk can be tested on a laptop, with no Pi, no camera and no scale:</p>
+<ul>
+<li><b>The filter:</b> <code>python3 weight_filter.py</code> checks its doctest and replays a made-up run with a wild reading (chapter 13).</li>
+<li><b>The bill:</b> <code>python3 bill.py</code> checks the paise examples, including rounding half up, and prints a sample bill.</li>
+<li><b>The network:</b> <code>python3 cnn_numpy.py</code> checks the fast convolution against the slow one; <code>gradient_check.py</code> checks every backward pass; saved test crops check the accuracy.</li>
+<li><b>The camera's box finder:</b> <code>find_item_box</code> runs on any saved photo of the tray.</li>
+<li><b>The whole app:</b> <code>python3 kiosk_app.py --simulate --windowed</code> (below).</li>
+</ul>
+<p>Only <code>HX711.read_raw</code> and <code>Camera.take_photo</code> truly need the hardware, and they are the two smallest pieces of code in the kiosk.</p>
+
+<h2>The simulated-scale flag</h2>
+<p><code>python3 kiosk_app.py --simulate --windowed</code> runs the full app in an 800 x 480 window on a laptop. <code>--simulate</code> swaps in two stand-ins: <code>SimulatedHX711</code>, which behaves like my real scale (offset 123,450, 431 counts per gram, a little noise, an occasional wild reading), and <code>FakeCamera</code>, which draws a blue tray with a coloured round "item". The keys 1 to 9, 0, Q and W put one of the 12 items on the pretend tray with a typical weight, and the space bar takes it off.</p>
+<p>On a laptop without RPi.GPIO, <code>hx711.py</code> still imports, because a small stand-in object with the same function names replaces the missing library. That is what lets the app, and the book's tests, run anywhere.</p>
+<p>This is a real test I ran, not a prediction. With <code>--simulate</code>, I put a 412 g tomato down, added it, took it off, then put a 1,033 g onion down and chose it on the "Not sure" screen, and tapped "Finish". The app passed through Waiting, Settling, Showing, Remove, Waiting, Choose and Bill in that order, and the bill showed Tomato Rs 14.42, Onion Rs 25.83, total Rs 40.25.</p>
+<div class="box careful"><div class="label">Be careful</div><p>The simulated run tests the app's logic, not the network: the fake camera draws coloured circles, which the CNN has never seen, so its guesses in a demo are meaningless. To demo recognition on a laptop, I use saved real photos instead.</p></div>
+
+<h2>Autostart with systemd</h2>
+<p>Chapter 5 showed the service file. In terms of program structure, systemd is the outermost layer: it starts <code>kiosk_app.py</code> after the desktop, restarts it 3 s after any crash, and collects everything the app prints into a log I can read over SSH with <code>journalctl --user -u kiosk.service</code>. That log is where the tracebacks from the tick's error handler end up.</p>
+
+<figure>
+<svg width="700" height="170" viewBox="0 0 700 170" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<defs><marker id="a152" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1c2b33"/></marker></defs>
+<rect x="10" y="20" width="680" height="140" rx="10" fill="none" stroke="#5b7083" stroke-dasharray="6,4"/><text x="20" y="38" fill="#5b7083" font-size="11">systemd user service: starts the app, restarts it on a crash, keeps the log</text>
+<rect x="30" y="50" width="640" height="100" rx="8" fill="none" stroke="#d9822b"/><text x="40" y="66" fill="#d9822b" font-size="11">kiosk_app.py: Tkinter main loop</text>
+<rect x="50" y="80" width="120" height="50" rx="6" fill="#e9f3f6" stroke="#0f7c8c"/><text x="110" y="102" text-anchor="middle" fill="#1c2b33">tick</text><text x="110" y="118" text-anchor="middle" fill="#5b7083" font-size="10">every 100 ms</text>
+<rect x="200" y="80" width="120" height="50" rx="6" fill="#e9f3f6" stroke="#0f7c8c"/><text x="260" y="102" text-anchor="middle" fill="#1c2b33">step</text><text x="260" y="118" text-anchor="middle" fill="#5b7083" font-size="10">state machine</text>
+<rect x="350" y="80" width="120" height="50" rx="6" fill="#fdf0e2" stroke="#d9822b"/><text x="410" y="102" text-anchor="middle" fill="#1c2b33">identify</text><text x="410" y="118" text-anchor="middle" fill="#5b7083" font-size="10">once per item</text>
+<rect x="500" y="80" width="150" height="50" rx="6" fill="#e9f3f6" stroke="#0f7c8c"/><text x="575" y="102" text-anchor="middle" fill="#1c2b33">button functions</text><text x="575" y="118" text-anchor="middle" fill="#5b7083" font-size="10">add, choose, finish</text>
+<line x1="170" y1="105" x2="198" y2="105" stroke="#1c2b33" marker-end="url(#a152)"/><line x1="320" y1="105" x2="348" y2="105" stroke="#1c2b33" marker-end="url(#a152)"/>
+<text x="485" y="146" text-anchor="middle" fill="#5b7083" font-size="10">taps, between ticks</text>
+</svg>
+<figcaption>Figure 15.2. The layers at run time. systemd keeps the app alive; Tkinter's main loop calls either the tick (every 100 ms) or a button function (on a tap), one at a time; the tick runs the state machine, which runs identify once per item.</figcaption>
+</figure>
+
+<div class="box tip"><div class="label">Interview tip</div><p>"How is your code structured?" My answer: "One module per job: CNN, HX711, filter, camera, bill, and an app that wires them together. Only two small functions need hardware, so I test everything else on a laptop, and the app has a simulate flag with a fake scale and camera. At run time it's a Tkinter main loop with a 100 ms tick driving a state machine, no threads, and systemd restarts it if it ever crashes."</p></div>
+<div class="box story"><div class="label">Design story</div><p>Version 1 was one 360-line file with the GUI, the HTTP request to the ESP8266, the YOLOv5 call and the price maths mixed together, and Windows paths typed into it. Testing any part meant running the whole thing with the hardware connected. Splitting version 2 into small files was what made it possible to write most of the code and the tests before the Pi was even wired.</p></div>
+</section>
+<section class="chapter" id="ch16">
+<h1><span class="num">16</span> Power, frame and the physical build</h1>
+<p class="small">Short version: one 5 V 3 A supply powers the whole kiosk, which draws about 1.1 A. The MDF box from version 1 holds everything: a post carries the camera 35 cm above the tray, an LED strip beside it lights the tray, the tray rests only on the load cell, and the touchscreen stands at a slant at the front with the Pi screwed to its back. Cables are routed so that nothing touches the tray.</p>
+
+<h2>Power: one supply for everything</h2>
+<p>The official Raspberry Pi 5 V 3 A USB-C supply is the only power input. From the Pi, power spreads to every other part.</p>
+<figure>
+<svg width="700" height="250" viewBox="0 0 700 250" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<defs><marker id="a161" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#d9822b"/></marker></defs>
+<rect x="10" y="95" width="130" height="60" rx="6" fill="#fdf0e2" stroke="#d9822b" stroke-width="2"/><text x="75" y="120" text-anchor="middle" fill="#1c2b33">5 V 3 A supply</text><text x="75" y="138" text-anchor="middle" fill="#5b7083" font-size="11">USB-C, wall plug</text>
+<rect x="220" y="80" width="150" height="90" rx="8" fill="#e9f3f6" stroke="#0f7c8c" stroke-width="2"/><text x="295" y="110" text-anchor="middle" fill="#1c2b33">Raspberry Pi 4</text><text x="295" y="128" text-anchor="middle" fill="#5b7083" font-size="11">about 0.5 A busy</text><text x="295" y="146" text-anchor="middle" fill="#5b7083" font-size="11">(processor, Wi-Fi off)</text>
+<line x1="140" y1="125" x2="218" y2="125" stroke="#d9822b" stroke-width="3" marker-end="url(#a161)"/><text x="179" y="116" text-anchor="middle" fill="#d9822b" font-size="11">1.1 A total</text>
+<g text-anchor="middle">
+<rect x="470" y="10" width="200" height="40" rx="6" fill="#e9f3f6" stroke="#5b7083"/><text x="570" y="35" fill="#1c2b33" font-size="12">7-inch screen, about 0.4 A</text>
+<rect x="470" y="70" width="200" height="40" rx="6" fill="#e9f3f6" stroke="#5b7083"/><text x="570" y="95" fill="#1c2b33" font-size="12">C270 webcam, about 0.1 A</text>
+<rect x="470" y="130" width="200" height="40" rx="6" fill="#e9f3f6" stroke="#5b7083"/><text x="570" y="155" fill="#1c2b33" font-size="12">LED strip, about 0.1 A</text>
+<rect x="470" y="190" width="200" height="40" rx="6" fill="#e9f3f6" stroke="#5b7083"/><text x="570" y="215" fill="#1c2b33" font-size="12">HX711 + load cell, under 2 mA</text>
+</g>
+<g stroke="#d9822b" stroke-width="2" fill="none" marker-end="url(#a161)">
+<path d="M370,95 C420,95 420,30 468,30"/><path d="M370,115 C420,115 420,90 468,90"/><path d="M370,135 C420,135 420,150 468,150"/><path d="M370,155 C420,155 420,210 468,210"/>
+</g>
+<g font-size="10" fill="#5b7083" text-anchor="end"><text x="462" y="22">pin 2 (5V)</text><text x="462" y="82">USB</text><text x="462" y="142">USB</text><text x="462" y="202">pin 1 (3V3)</text></g>
+</svg>
+<figcaption>Figure 16.1. How power flows through the kiosk. Everything comes from the one supply through the Pi: the screen from the 5 V header pin, the webcam and LED strip from USB ports, and the HX711 from the 3.3 V pin. The figures are typical currents at 5 V (the HX711's share is at 3.3 V).</figcaption>
+</figure>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>With a USB-C power meter between the supply and the Pi, the whole kiosk drew about 1.1 A at 5.1 V while showing "Place an item" with the LED strip on, and briefly about 1.3 A during the photo and CNN step. The supply voltage never dropped below 5.0 V, and the lightning symbol never appeared.</p></div>
+<div class="box why"><div class="label">Why a 3 A supply when the kiosk uses 1.1 A?</div><p>The Pi 4 can draw much more for short moments: at start-up, when all four cores are busy, or when a USB device switches on. A supply that is just big enough lets the voltage sag at those moments, which shows as the lightning symbol, a slowed processor, or a camera that disconnects. The official 3 A supply also keeps its voltage slightly above 5 V on purpose, to make up for the loss in the cable. Spare capacity is cheap insurance.</p></div>
+<div class="box careful"><div class="label">Be careful</div><p>The 5 V pin on the header is joined directly to the supply, with no fuse between them and the screen. A short circuit on the screen's power wires goes straight to the supply. I use the screen's own jumper wires, push them fully onto the pins, and never plug or unplug them with the power on.</p></div>
+
+<h3>Heat</h3>
+<p>The Pi's processor slows itself down if it gets too hot (it starts at 80 &deg;C). The kiosk is idle most of the time and runs the CNN for 18 ms per item, so heat is not a real problem, but the Pi sits in a closed box behind a screen. The stick-on heat sinks and a few holes drilled in the MDF behind the screen keep it comfortable.</p>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>Read with <code>vcgencmd measure_temp</code>, the processor was at about 52 &deg;C after start-up and about 58 &deg;C after an hour of use with a customer every minute, far below the 80 &deg;C where it would slow down.</p></div>
+
+<h2>The camera height and the light</h2>
+<p>The camera is fixed to a short arm at the top of a vertical post at the back of the box. The arm holds the camera over the centre of the tray, lens pointing straight down, 35 cm above the tray surface. At that height the C270 sees about 29 cm x 22 cm, which covers the 25 cm x 20 cm tray with a small border.</p>
+<p>The 30 cm LED strip is stuck along the underside of the same arm, beside the camera, so its light falls straight down on the tray. Light from directly above makes only small shadows, right under each item, which keeps the colour mask's box tight.</p>
+<div class="box why"><div class="label">Why put the light right beside the camera?</div><p>Light from the side throws long shadows across the tray. A shadow is not blue, so the colour mask would count it as part of the item and make the box too big. Light from the camera's own direction hides each item's shadow mostly underneath the item itself. It also makes the brightness of every photo nearly the same, which is the reason the LED strip exists (chapter 3).</p></div>
+
+<h2>The frame from version 1</h2>
+<p>The frame is the MDF box my team built for version 1. I reused it unchanged except for three things: a mount for the touchscreen, holes for cables and air, and a new shelf for the HX711.</p>
+<figure>
+<svg width="700" height="330" viewBox="0 0 700 330" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<rect x="80" y="270" width="420" height="16" fill="#5b7083"/>
+<rect x="470" y="40" width="16" height="230" fill="#5b7083"/>
+<rect x="290" y="40" width="196" height="12" fill="#5b7083"/>
+<rect x="290" y="52" width="40" height="26" fill="#1c2b33"/><text x="310" y="69" text-anchor="middle" fill="#ffffff" font-size="10">C270</text>
+<rect x="335" y="52" width="80" height="6" fill="#ffd27a" stroke="#d9822b"/><text x="375" y="72" text-anchor="middle" fill="#d9822b" font-size="10">LED strip</text>
+<line x1="310" y1="78" x2="215" y2="225" stroke="#0f7c8c" stroke-dasharray="4,3"/><line x1="310" y1="78" x2="405" y2="225" stroke="#0f7c8c" stroke-dasharray="4,3"/>
+<rect x="200" y="225" width="220" height="10" fill="#2a6fdb"/>
+<rect x="260" y="242" width="110" height="12" fill="#e9f3f6" stroke="#0f7c8c"/>
+<rect x="258" y="254" width="20" height="16" fill="#9aa5ab"/><rect x="345" y="235" width="20" height="8" fill="#9aa5ab"/>
+<line x1="560" y1="78" x2="560" y2="230" stroke="#1c2b33"/><line x1="552" y1="78" x2="568" y2="78" stroke="#1c2b33"/><line x1="552" y1="230" x2="568" y2="230" stroke="#1c2b33"/>
+<text x="572" y="150" fill="#1c2b33">35 cm</text><text x="572" y="166" fill="#5b7083" font-size="11">lens to tray</text>
+<line x1="490" y1="230" x2="552" y2="230" stroke="#5b7083" stroke-dasharray="2,3"/><line x1="335" y1="78" x2="552" y2="78" stroke="#5b7083" stroke-dasharray="2,3"/>
+<line x1="200" y1="300" x2="420" y2="300" stroke="#1c2b33"/><line x1="200" y1="294" x2="200" y2="306" stroke="#1c2b33"/><line x1="420" y1="294" x2="420" y2="306" stroke="#1c2b33"/><text x="310" y="320" text-anchor="middle" fill="#1c2b33" font-size="11">tray 25 cm</text>
+<line x1="80" y1="292" x2="80" y2="312" stroke="#5b7083"/><line x1="500" y1="292" x2="500" y2="312" stroke="#5b7083"/><text x="490" y="322" text-anchor="end" fill="#5b7083" font-size="11">base 40 cm</text>
+<polygon points="85,270 150,270 120,170 105,170" fill="#e9f3f6" stroke="#5b7083"/>
+<line x1="110" y1="265" x2="140" y2="178" stroke="#1c2b33" stroke-width="6"/><text x="20" y="128" fill="#1c2b33" font-size="11">7-inch screen</text><text x="20" y="142" fill="#5b7083" font-size="11">at 30 degrees,</text><text x="20" y="156" fill="#5b7083" font-size="11">Pi on its back</text>
+<rect x="160" y="258" width="34" height="12" fill="#2f8f4e"/><text x="177" y="252" text-anchor="middle" fill="#2f8f4e" font-size="10">HX711</text>
+<text x="250" y="198" fill="#1c2b33" font-size="11">camera view</text><text x="250" y="212" fill="#5b7083" font-size="11">about 29 x 22 cm</text>
+<text x="380" y="262" fill="#0f7c8c" font-size="10">load cell</text>
+<text x="494" y="36" fill="#5b7083" font-size="11">post 50 cm</text>
+<text x="20" y="22" fill="#1c2b33">Side view of the kiosk (customer stands on the left)</text>
+</svg>
+<figcaption>Figure 16.2. Side view of the finished kiosk with its main dimensions. The camera and LED strip hang over the tray from a post at the back; the tray sits on the load cell; the touchscreen leans back at the front with the Pi screwed behind it; the HX711 board is fixed to the base between the screen and the load cell, close to both.</figcaption>
+</figure>
+<table>
+<thead><tr><th>Part</th><th>Size or position</th></tr></thead>
+<tbody>
+<tr><td>Base</td><td>MDF, 40 cm wide x 30 cm deep, 12 mm thick</td></tr>
+<tr><td>Camera post</td><td>at the back, 50 cm tall, with an arm reaching over the tray centre</td></tr>
+<tr><td>Camera lens</td><td>35 cm above the tray surface, pointing straight down</td></tr>
+<tr><td>Tray</td><td>blue plastic, 25 cm x 20 cm, top surface about 5 cm above the base</td></tr>
+<tr><td>Load cell</td><td>under the tray centre, one end on a spacer on the base, the other under the tray spacer</td></tr>
+<tr><td>Touchscreen</td><td>at the front edge, leaning back about 30 degrees from upright</td></tr>
+<tr><td>Raspberry Pi</td><td>screwed to the four standoffs on the back of the official screen</td></tr>
+<tr><td>HX711 board</td><td>on the base, between the screen and the load cell</td></tr>
+</tbody>
+</table>
+<div class="box why"><div class="label">Why mount the Pi on the back of the screen?</div><p>The official 7-inch display has four threaded standoffs on its back made exactly for a Pi. Mounting it there keeps the short DSI ribbon and the two power jumpers short and protected, needs no extra box, and puts the Pi close to the HX711 on the base, so the four signal wires stay at 20 cm. It also puts the warmest part of the kiosk behind the screen, where the air holes are.</p></div>
+<div class="box why"><div class="label">Why lean the screen back?</div><p>A customer standing at a counter looks down at about 45 degrees. A screen standing upright would be seen at a sharp angle, with reflections from ceiling lights. Leaning it back about 30 degrees faces it towards the customer's eyes and makes the large buttons easy to tap without reaching over the tray.</p></div>
+
+<h2>The tray rests only on the load cell</h2>
+<p>Chapter 4 gave the rule; here is how the build follows it. The load cell is screwed down at one end through a 10 mm spacer, with two M5 screws into the base. The tray is screwed at its centre to the other end through a second spacer, with two M4 screws. The spacers give the bar room to bend. Around the tray there is a gap of at least 5 mm to the post, the screen and the edge of the box.</p>
+<div class="box careful"><div class="label">Be careful</div><p>The screws holding the tray must be the right length. A screw that goes too deep into the load cell presses on the bending part and changes its behaviour; a loose screw lets the tray rock, which the steady rule then never accepts. I tightened them firmly, then checked that the empty scale settled to within 1 g of zero after tapping the tray.</p></div>
+
+<h2>Cable routing</h2>
+<p>Every cable has a fixed path so that none can rest on the tray or pull on the screen.</p>
+<ul>
+<li><b>Camera USB and LED strip USB</b> run down the back of the post, held by cable clips every 10 cm, then along the base behind the tray to the Pi.</li>
+<li><b>Load cell leads</b> leave the cell on the fixed end, which does not move, and run along the base to the HX711. A lead fixed to the moving end would carry some of the tray's weight.</li>
+<li><b>HX711 to Pi jumpers</b> rise from the base to the Pi's header behind the screen, bundled with a cable tie.</li>
+<li><b>The power cable</b> enters through a hole at the back of the base, with a cable tie inside as strain relief, so a pull on the cable cannot reach the Pi's USB-C socket.</li>
+</ul>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>Before I clipped the camera cable to the post, it hung down behind the tray and touched its back edge. A 500 g check weight then read 470 g, and the error changed each time the cable moved. With the cable clipped, the reading went back to 499.2 g.</p></div>
+
+<h2>The finished kiosk, from the customer's side</h2>
+<p>A customer sees a blue tray in front of them, a small camera and light above it, and a touchscreen to the left saying "Place an item". There are no wires on show, no keyboard and no buttons other than those on the screen. The whole kiosk stands on a counter, needs one wall socket, and needs no network to work.</p>
+<div class="box tip"><div class="label">Interview tip</div><p>Physical questions are often about trade-offs I can show I thought about. Two good ones: "Why does the light sit next to the camera?" (shadows fall under the items, so the colour mask's boxes stay tight) and "What did you learn from the build?" (a single cable touching the tray made the scale read 30 g light; in a weighing device, mechanics matter as much as code).</p></div>
+<div class="box story"><div class="label">Design story</div><p>Version 1's frame held a camera over a tray and a separate ESP8266 board, and the laptop stood beside it. Version 2 kept the box and the camera post, removed the ESP8266, and brought the computer inside the kiosk by mounting the Pi behind the touchscreen. The kiosk went from "a box plus a laptop plus a phone hotspot" to one object with one plug.</p></div>
+</section>

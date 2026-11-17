@@ -90,6 +90,9 @@ class SimulatedHX711:
         self.grams = 0.0
         self.rng = random.Random(seed)
 
+    def is_ready(self):
+        return True                                    # a pretend reading is always waiting
+
     def set_load(self, grams):
         """Pretend an item of this weight is now on the tray (0 = empty)."""
         self.grams = float(grams)

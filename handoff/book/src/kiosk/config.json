@@ -1,0 +1,9 @@
+{
+  "offset": 123450,
+  "counts_per_gram": 431.0,
+  "calibrated_with_grams": 500,
+  "camera_index": 0,
+  "confidence_threshold": 0.60,
+  "item_on_grams": 20,
+  "item_off_grams": 10
+}

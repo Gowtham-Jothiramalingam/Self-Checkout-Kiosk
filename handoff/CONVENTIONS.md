@@ -294,3 +294,32 @@ Example: 412 g tomato = 1,442 paise = Rs 14.42.
   mostly first hour. Corners with 500 g: 498.4 to 501.6 g. Creep: 2 kg for 10 min +0.8 g. Vibration jumps up
   to 15 g for 0.5 s. Cable touching tray: 500 g read 470 g. Check weights (avg of 5): 100 -> 100.6, 500 -> 499.2,
   1000 -> 1002.0, 2000 -> 1998.6. 2 g at Rs 240/kg = 48 paise. Not legal for trade (Legal Metrology).
+### Added in chapters 14-16 (bill.py, camera.py, kiosk_app.py, prices.csv, config.json written early; tested)
+- book/src/kiosk/bill.py, camera.py, kiosk_app.py, prices.csv, config.json ALREADY EXIST; ch14/ch15 quote them
+  verbatim (load_prices, check_prices, price_paise, rupees, Bill, KioskApp.tick/step/identify/__init__,
+  prices.csv, config.json). Regenerate excerpts if they change.
+- bill.py: load_prices(path) (CSV header "item,rupees_per_kg"), check_prices(prices, CLASSES) raises ValueError,
+  price_paise(grams, rpk) = (round(grams) * rpk * 100 + 500) // 1000 (whole grams, half paisa rounds UP, never
+  Python round on paise), money(paise) '14.42', rupees(paise) 'Rs 14.42', Bill.add/remove_last/clear/
+  total_paise/text(). Sample bill: Tomato 412 g 14.42, Onion 1033 g (from 1032.6) 25.83, Apple 618 g 148.32,
+  Lemon 97 g 8.73, total 197.30. Float examples: 8.78 + 6.3 = 15.079999999999998; 14.42 + 12.15 + 31.2 =
+  57.769999999999996.
+- config.json keys: offset 123450, counts_per_gram 431.0, calibrated_with_grams 500, camera_index 0,
+  confidence_threshold 0.60, item_on_grams 20, item_off_grams 10. (camera index currently fixed to 0 in app.)
+- camera.py: WIDTH 640, HEIGHT 480, WARM_UP_FRAMES 5, FLUSH_FRAMES 4, MIN_ITEM_PIXELS 400, TRAY_LOW (90,80,50),
+  TRAY_HIGH (130,255,255); Camera(index).take_photo()/close(); FakeCamera (blue tray + coloured circle, .colour);
+  find_item_box(bgr) -> (x,y,w,h) or None (5x5 opening, biggest contour).
+- kiosk_app.py: flags --simulate --windowed; keys 1-9,0,Q,W put demo items, space removes; Ctrl+Q quits.
+  States waiting/settling/identifying/showing/choosing/remove/bill ("Choose" screen in the book). TICK_MS 100,
+  TARE_READINGS 20, NO_READING_LIMIT 30 (3 s -> "Scale not responding"), CHANGED_G 5 (steady weight > 5 g from
+  shown item -> Settling again). Tick reads only if is_ready() (never blocks). Choosing an item adds it at once.
+  "Could not see the item, please choose" when no box. Bill screen ignores the scale. App start-up about 4 s.
+  REAL test run (Xvfb, --simulate): Waiting, Settling, Showing, Remove, Waiting, Choose, Bill; total Rs 40.25.
+  SimulatedHX711 now also has is_ready().
+- Laptop note: in this build container only /usr/bin/python3.12 has tkinter (numpy+opencv-headless installed for it).
+- Physical (ch16): base MDF 40 x 30 cm, 12 mm; camera post 50 cm at the back with an arm; tray top ~5 cm above
+  base; screen at the front leaning back ~30 degrees; Pi screwed to the screen's back standoffs; HX711 on the base
+  between screen and load cell; load cell fixed end on a 10 mm spacer with 2 x M5, tray on the free end with
+  2 x M4; cable clips every 10 cm; power cable strain relief. Currents: Pi ~0.5 A, screen ~0.4 A, C270 ~0.1 A,
+  LED ~0.1 A, HX711 < 2 mA; total 1.1 A at 5.1 V idle, ~1.3 A peak during photo+CNN, never below 5.0 V.
+  CPU 52 C after start, 58 C after an hour (throttle at 80 C), vcgencmd measure_temp.
