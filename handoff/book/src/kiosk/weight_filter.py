@@ -62,7 +62,7 @@ class WeightFilter:
         return sum(self.clean) / len(self.clean) if self.clean else 0.0
 
     def tare(self, raw_readings):
-        """Make the average of these raw readings the new zero (start-up uses 20 readings)."""
+        """Make the median of these raw readings the new zero (start-up uses 20 readings)."""
         good = sorted(r for r in raw_readings if r is not None)
         if good:
             self.offset = float(median(good))

@@ -24,7 +24,7 @@ print(frame[100, 200])            # the pixel in row 100, column 200, e.g. [182 
 
 <div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>I checked the colour-mask boxes against the hand-drawn boxes on 100 single-item training photos. The average overlap (intersection over union, the shared area divided by the total covered area) was 0.86, and the mask found the item in all 100 photos. A typical difference was 5 to 10 pixels on one edge, usually from a shadow.</p></div>
 
-<div class="box why"><div class="label">Why find the box by colour and not with the network?</div><p>Finding "the thing that is not blue" on a plain blue tray is an easy job for a simple colour rule, and it takes about 2 ms. A detector network that finds boxes, like the YOLOv5 of version 1, is hundreds of times heavier. I control the tray colour and the light, so I used that control to make the hard problem (detection) disappear, and kept the learned network for the part that really needs learning: telling a mosambi from a lemon.</p></div>
+<div class="box why"><div class="label">Why find the box by colour and not with the network?</div><p>Finding "the thing that is not blue" on a plain blue tray is an easy job for a simple colour rule, and it takes about 3 ms. A detector network that finds boxes, like the YOLOv5 of version 1, is hundreds of times heavier. I control the tray colour and the light, so I used that control to make the hard problem (detection) disappear, and kept the learned network for the part that really needs learning: telling a mosambi from a lemon.</p></div>
 
 <h2>The preparation steps, and why each one</h2>
 <p>After the crop, one function, <code>prepare_image</code>, turns the crop into the block of numbers the network eats. Every step has a reason.</p>
@@ -153,7 +153,7 @@ print(frame[100, 200])            # the pixel in row 100, column 200, e.g. [182 
 </table>
 <div class="box tip"><div class="label">Interview tip</div><p>Interviewers often ask "so OpenCV did the recognition?" My answer: "No. OpenCV only captures and prepares the image: crop, pad, colour order, resize. The classifier is my own NumPy code, every layer forward and backward. OpenCV's job ends when it hands over a 3 x 64 x 64 array." Being exact about this boundary is what makes the "from scratch" claim believable.</p></div>
 
-<div class="box story"><div class="label">Design story</div><p>In version 1 the whole 640 x 480 frame went into YOLOv5x, which found boxes and names together. That needed PyTorch and a model of about 170 MB. In version 2 the plain blue tray lets a 2 ms colour rule find the box, so the learned part only has to name a 64 x 64 crop. Splitting "where is it" from "what is it" is the reason a network with 80,604 weights is enough.</p></div>
+<div class="box story"><div class="label">Design story</div><p>In version 1 the whole 640 x 480 frame went into YOLOv5x, which found boxes and names together. That needed PyTorch and a model of about 170 MB. In version 2 the plain blue tray lets a 3 ms colour rule find the box, so the learned part only has to name a 64 x 64 crop. Splitting "where is it" from "what is it" is the reason a network with 80,604 weights is enough.</p></div>
 </section>
 <section class="chapter" id="ch7">
 <h1><span class="num">7</span> The CNN, layer by layer</h1>

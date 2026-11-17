@@ -43,7 +43,8 @@ WAITING, SETTLING, IDENTIFYING, SHOWING, CHOOSING, REMOVE, BILL = (
 
 BG, TEXT, GREY = "#f4f7f8", "#1c2b33", "#5b7083"
 TEAL, GREEN, ORANGE = "#0f7c8c", "#2f8f4e", "#d9822b"
-BIG, MID, SMALL, BUTTON = ("DejaVu Sans", 40, "bold"), ("DejaVu Sans", 24), ("DejaVu Sans", 15), ("DejaVu Sans", 20, "bold")
+BIG, MID, SMALL = ("DejaVu Sans", 40, "bold"), ("DejaVu Sans", 24), ("DejaVu Sans", 15)
+BUTTON, CHOICE = ("DejaVu Sans", 20, "bold"), ("DejaVu Sans", 13, "bold")
 
 # Laptop demo only: key -> (class name, grams, BGR colour for the fake camera).
 DEMO_ITEMS = {"1": ("Apple", 618, (40, 30, 190)), "2": ("Beetroot", 260, (70, 20, 110)),
@@ -70,7 +71,9 @@ class KioskApp:
         # 2. Open the camera (it throws away its first dark frames).
         self.camera = camera.FakeCamera() if simulate else camera.Camera(0)
 
-        # 3. Set up the GPIO pins for the HX711 (or the simulated scale).
+        # 3. Set up the GPIO pins for the HX711 (the simulated scale is made in step 4).
+        self.scale = None if simulate else hx711.HX711()
+
         # 4. Read the calibration and settings, and the price table.
         self.config = json.loads((HERE / "config.json").read_text(encoding="utf-8"))
         self.prices = load_prices(HERE / "prices.csv")
@@ -80,8 +83,6 @@ class KioskApp:
         self.off_g = float(self.config["item_off_grams"])
         if simulate:
             self.scale = hx711.SimulatedHX711(self.config["offset"], self.config["counts_per_gram"])
-        else:
-            self.scale = hx711.HX711()
         self.filter = WeightFilter(self.config["offset"], self.config["counts_per_gram"])
 
         # 5. Tare: the tray must be empty now.
@@ -90,6 +91,8 @@ class KioskApp:
         # 6. The window and the first screen, then 7. start the tick.
         self.bill = Bill()
         self.item = None             # the item being shown: {"grams": .., "guesses": [(index, chance), ..]}
+        self.last_added = None       # the bill line just added, shown on the Remove screen
+        self.note = ""               # a message for the status line, kept until the next item
         self.state = None
         self.no_reading = 0
         self.build_window(windowed)
@@ -119,20 +122,21 @@ class KioskApp:
         self.status = tk.Label(r, text="", font=SMALL, fg=ORANGE, bg=BG)
         self.status.pack(fill="x", pady=4)
 
-    def screen(self, big, small="", buttons=(), big_font=BIG):
+    def screen(self, big, small="", buttons=(), big_font=BIG, button_font=BUTTON):
         """Clear the middle of the window and draw one screen: a big line, a small line, buttons."""
         for w in self.body.winfo_children():
             w.destroy()
         self.big = tk.Label(self.body, text=big, font=big_font, fg=TEXT, bg=BG)
         self.big.pack(pady=(30, 6))
         self.small = tk.Label(self.body, text=small, font=MID, fg=GREY, bg=BG)
-        self.small.pack(pady=6)
+        if small:
+            self.small.pack(pady=6)
         row = tk.Frame(self.body, bg=BG)
         row.pack(side="bottom", pady=18)
         for text, command, colour in buttons:
-            tk.Button(row, text=text, command=command, font=BUTTON, fg="white", bg=colour,
+            tk.Button(row, text=text, command=command, font=button_font, fg="white", bg=colour,
                       activebackground=colour, activeforeground="white", relief="flat",
-                      width=max(8, len(text) + 4), height=2).pack(side="left", padx=10)
+                      width=max(8, len(text) + 2), height=2).pack(side="left", padx=8)
         n = len(self.bill.lines)
         self.total_label.config(text=f"{n} item{'s' if n != 1 else ''}   {rupees(self.bill.total_paise)}")
 
@@ -141,6 +145,7 @@ class KioskApp:
         """Change state and draw its screen."""
         self.state = state
         if state == WAITING:
+            self.note = ""
             buttons = [("Finish", lambda: self.go(BILL), TEAL)] if self.bill.lines else []
             self.screen("Place an item", "One item, in the middle of the tray", buttons)
         elif state == SETTLING:
@@ -155,8 +160,11 @@ class KioskApp:
         elif state == CHOOSING:
             self.choose_screen(full_list=not self.item["guesses"])
         elif state == REMOVE:
-            name, g, rpk, p = self.bill.lines[-1]
-            self.screen("Take the item off", f"Added: {name}, {g} g, {rupees(p)}")
+            if self.last_added:
+                name, g, rpk, p = self.last_added
+                self.screen("Take the item off", f"Added: {name}, {g} g, {rupees(p)}")
+            else:
+                self.screen("Take the item off", "Nothing was added")
         elif state == BILL:
             self.screen(self.bill.text(), "", [("Back", lambda: self.go(WAITING), GREY),
                                                ("New customer", self.new_customer, GREEN)],
@@ -167,17 +175,19 @@ class KioskApp:
         sure = bool(guesses) and guesses[0][1] >= self.threshold
         title = "Which item is it?" if sure else "Not sure, please choose"
         if full_list:
-            self.screen(title, "", [("Cancel", lambda: self.go(REMOVE if self.bill.lines else WAITING), GREY)],
+            self.screen(title, "", [("Cancel", self.cancel, GREY)],
                         big_font=MID)
             grid = tk.Frame(self.body, bg=BG)
             grid.pack()
             for k, name in enumerate(CLASSES):
-                tk.Button(grid, text=name, font=SMALL, width=13, height=2, bg="white", fg=TEXT,
-                          command=lambda n=name: self.add(n)).grid(row=k // 4, column=k % 4, padx=4, pady=4)
+                tk.Button(grid, text=name, font=CHOICE, width=11, bg="white", fg=TEXT,
+                          command=lambda n=name: self.add(n)).grid(row=k // 4, column=k % 4,
+                                                                   padx=3, pady=3, ipady=9)
         else:
             buttons = [(CLASSES[i], lambda n=CLASSES[i]: self.add(n), TEAL) for i, _ in guesses[:3]]
             buttons.append(("Other items", lambda: self.choose_screen(full_list=True), GREY))
-            self.screen(title, f"{self.item['grams']:.0f} g on the tray", buttons, big_font=MID)
+            self.screen(title, f"{self.item['grams']:.0f} g on the tray", buttons, big_font=MID,
+                        button_font=CHOICE)             # smaller text: four buttons must fit in 800 pixels
 
     # ------------------------------------------------------------------ the tick
     def tick(self):
@@ -186,7 +196,7 @@ class KioskApp:
             raw = self.scale.read_raw(timeout=0) if self.scale.is_ready() else None
             self.no_reading = 0 if raw is not None else self.no_reading + 1
             grams = self.filter.add(raw)
-            self.status.config(text="Scale not responding" if self.no_reading > NO_READING_LIMIT else "")
+            self.status.config(text="Scale not responding" if self.no_reading > NO_READING_LIMIT else self.note)
             self.step(grams)
         except Exception:
             traceback.print_exc()                    # keep the kiosk alive; the log shows what happened
@@ -202,6 +212,8 @@ class KioskApp:
             self.big.config(text=f"{grams:.0f} g")   # live weight
             if grams < self.off_g:
                 self.go(WAITING)                     # it was lifted off again
+            elif f.steady and f.weight < self.on_g:
+                self.go(WAITING)                     # steady but under 20 g: not an item
             elif f.steady:
                 self.identify()
         elif s in (SHOWING, CHOOSING):
@@ -224,7 +236,7 @@ class KioskApp:
             x = prepare_image(crop_with_margin(photo, box))
             guesses = top_k(self.net, x, 3)
         else:
-            self.status.config(text="Could not see the item, please choose")
+            self.note = "Could not see the item, please choose"
         self.item = {"grams": self.filter.weight, "guesses": guesses}
         if guesses and guesses[0][1] >= self.threshold:
             self.go(SHOWING)
@@ -233,7 +245,12 @@ class KioskApp:
 
     # ------------------------------------------------------------------ buttons
     def add(self, name):
-        self.bill.add(name, self.item["grams"], self.prices[name])
+        self.last_added = self.bill.add(name, self.item["grams"], self.prices[name])
+        self.go(REMOVE)
+
+    def cancel(self):
+        """Leave the Choose screen without billing anything."""
+        self.last_added = None
         self.go(REMOVE)
 
     def new_customer(self):

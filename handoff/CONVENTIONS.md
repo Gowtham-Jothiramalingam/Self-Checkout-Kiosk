@@ -357,3 +357,15 @@ Example: 412 g tomato = 1,442 paise = Rs 14.42.
   embedded code is 35 pages. No blank pages, no overflow found on a full thumbnail check.
 - Deliverables: book/Self_Checkout_Kiosk_Project_Book.pdf (+ .html), book/src/README.md,
   book/Self_Checkout_Kiosk_src.zip (src without __pycache__).
+### Turn 8 (review)
+- kiosk_app.py fixes: (1) status-line note kept until the next item (self.note) instead of being wiped by the next
+  tick; (2) cancel() + self.last_added: Cancel on the full list goes to Remove with "Nothing was added";
+  (3) Settling: a steady weight under 20 g goes back to Waiting; (4) start-up order in code now matches ch15
+  (GPIO in step 3, config in step 4); (5) Choose screens fit 800 px (CHOICE font 13 bold, grid width 11).
+- config.json: camera_index removed (it was never used; the camera is index 0). weight_filter.tare docstring says
+  median. prepare_dataset.py skips a photo OpenCV cannot read.
+- Text: box finder is 3 ms everywhere; "about 50" pomegranate training crops; no claim that two wild readings came
+  close together (every wild reading stood alone); ch21 says 67 questions; new sections "The order I assembled it
+  in", "What I would build differently" (ch16), "What stayed the same, and why" (ch20); 8 more Why boxes in ch16,
+  18, 19, 20, 21. All excerpts re-synced; ch17 re-embedded and verified.
+- Final: 168 pages, 21 chapters, about 48,800 words of prose plus code.

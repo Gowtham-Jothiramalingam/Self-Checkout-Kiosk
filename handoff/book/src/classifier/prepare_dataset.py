@@ -80,7 +80,11 @@ def main():
         if not label_path.exists():
             print("no label file for", img_path.name)
             continue
-        h, w = cv2.imread(str(img_path)).shape[:2]
+        photo = cv2.imread(str(img_path))
+        if photo is None:
+            print("cannot read", img_path.name)
+            continue
+        h, w = photo.shape[:2]
         boxes = read_boxes(label_path, w, h)
         dropped.update(name for name, _ in boxes if name in DROPPED)
         boxes = [(n, b) for n, b in boxes if n not in DROPPED]

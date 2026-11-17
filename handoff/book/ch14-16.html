@@ -119,10 +119,10 @@ total: Rs 197.30</code></pre>
 <thead><tr><th>State</th><th>Screen</th><th>Leaves when</th></tr></thead>
 <tbody>
 <tr><td>Waiting</td><td>"Place an item"; "Finish" if the bill has lines</td><td>weight rises above 20 g: go to Settling. "Finish": go to Bill</td></tr>
-<tr><td>Settling</td><td>the live weight, "Weighing, please wait"</td><td>weight steady: go to Identifying. Weight below 10 g: back to Waiting</td></tr>
+<tr><td>Settling</td><td>the live weight, "Weighing, please wait"</td><td>weight steady and 20 g or more: go to Identifying. Weight below 10 g, or steady below 20 g: back to Waiting</td></tr>
 <tr><td>Identifying</td><td>(lasts about 60 ms, no screen of its own)</td><td>top chance 0.60 or more: Showing. Below 0.60, or no item found: Choose</td></tr>
 <tr><td>Showing</td><td>name, grams, Rs/kg, price; "Add to bill", "Wrong item"</td><td>"Add to bill": Remove. "Wrong item": Choose. Item lifted off: Waiting (nothing billed)</td></tr>
-<tr><td>Choose</td><td>top 3 guesses as buttons, "Other items" for all 12</td><td>an item is tapped: it is added, go to Remove</td></tr>
+<tr><td>Choose</td><td>top 3 guesses as buttons, "Other items" for all 12</td><td>an item is tapped: it is added, go to Remove. "Cancel" on the full list: go to Remove with nothing added</td></tr>
 <tr><td>Remove</td><td>"Take the item off", and what was just added</td><td>weight below 10 g: Waiting</td></tr>
 <tr><td>Bill</td><td>the itemised bill and total; "Back", "New customer"</td><td>"Back": Waiting. "New customer": clear the bill, Waiting</td></tr>
 </tbody>
@@ -193,7 +193,7 @@ total: Rs 197.30</code></pre>
         raw = self.scale.read_raw(timeout=0) if self.scale.is_ready() else None
         self.no_reading = 0 if raw is not None else self.no_reading + 1
         grams = self.filter.add(raw)
-        self.status.config(text="Scale not responding" if self.no_reading &gt; NO_READING_LIMIT else "")
+        self.status.config(text="Scale not responding" if self.no_reading &gt; NO_READING_LIMIT else self.note)
         self.step(grams)
     except Exception:
         traceback.print_exc()                    # keep the kiosk alive; the log shows what happened
@@ -209,6 +209,8 @@ total: Rs 197.30</code></pre>
         self.big.config(text=f"{grams:.0f} g")   # live weight
         if grams &lt; self.off_g:
             self.go(WAITING)                     # it was lifted off again
+        elif f.steady and f.weight &lt; self.on_g:
+            self.go(WAITING)                     # steady but under 20 g: not an item
         elif f.steady:
             self.identify()
     elif s in (SHOWING, CHOOSING):
@@ -239,7 +241,7 @@ total: Rs 197.30</code></pre>
         x = prepare_image(crop_with_margin(photo, box))
         guesses = top_k(self.net, x, 3)
     else:
-        self.status.config(text="Could not see the item, please choose")
+        self.note = "Could not see the item, please choose"
     self.item = {"grams": self.filter.weight, "guesses": guesses}
     if guesses and guesses[0][1] &gt;= self.threshold:
         self.go(SHOWING)
@@ -316,7 +318,6 @@ total: Rs 197.30</code></pre>
   "offset": 123450,
   "counts_per_gram": 431.0,
   "calibrated_with_grams": 500,
-  "camera_index": 0,
   "confidence_threshold": 0.60,
   "item_on_grams": 20,
   "item_off_grams": 10
@@ -365,7 +366,9 @@ total: Rs 197.30</code></pre>
     # 2. Open the camera (it throws away its first dark frames).
     self.camera = camera.FakeCamera() if simulate else camera.Camera(0)
 
-    # 3. Set up the GPIO pins for the HX711 (or the simulated scale).
+    # 3. Set up the GPIO pins for the HX711 (the simulated scale is made in step 4).
+    self.scale = None if simulate else hx711.HX711()
+
     # 4. Read the calibration and settings, and the price table.
     self.config = json.loads((HERE / "config.json").read_text(encoding="utf-8"))
     self.prices = load_prices(HERE / "prices.csv")
@@ -375,8 +378,6 @@ total: Rs 197.30</code></pre>
     self.off_g = float(self.config["item_off_grams"])
     if simulate:
         self.scale = hx711.SimulatedHX711(self.config["offset"], self.config["counts_per_gram"])
-    else:
-        self.scale = hx711.HX711()
     self.filter = WeightFilter(self.config["offset"], self.config["counts_per_gram"])
 
     # 5. Tare: the tray must be empty now.
@@ -385,6 +386,8 @@ total: Rs 197.30</code></pre>
     # 6. The window and the first screen, then 7. start the tick.
     self.bill = Bill()
     self.item = None             # the item being shown: {"grams": .., "guesses": [(index, chance), ..]}
+    self.last_added = None       # the bill line just added, shown on the Remove screen
+    self.note = ""               # a message for the status line, kept until the next item
     self.state = None
     self.no_reading = 0
     self.build_window(windowed)
@@ -426,6 +429,7 @@ total: Rs 197.30</code></pre>
 <tr><td><code>item</code></td><td>the weight and the top 3 guesses of the item on the tray</td><td><code>identify()</code></td></tr>
 <tr><td><code>bill</code></td><td>the bill lines</td><td>"Add to bill", Choose, "New customer"</td></tr>
 <tr><td><code>no_reading</code></td><td>ticks in a row without a reading</td><td>the tick</td></tr>
+<tr><td><code>note</code>, <code>last_added</code></td><td>a message for the status line; the bill line just added, for the Remove screen</td><td><code>identify()</code>, <code>add()</code>, <code>cancel()</code></td></tr>
 </tbody>
 </table>
 <p>Because the tick and the button functions all run one at a time inside Tkinter's main loop, they can never change these fields at the same moment. There are no threads, so there is no need for locks. This is the biggest reason I kept the CNN inside the tick and the HX711 at 10 readings per second.</p>
@@ -581,6 +585,21 @@ total: Rs 197.30</code></pre>
 <li><b>The power cable</b> enters through a hole at the back of the base, with a cable tie inside as strain relief, so a pull on the cable cannot reach the Pi's USB-C socket.</li>
 </ul>
 <div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>Before I clipped the camera cable to the post, it hung down behind the tray and touched its back edge. A 500 g check weight then read 470 g, and the error changed each time the cable moved. With the cable clipped, the reading went back to 499.2 g.</p></div>
+
+<h2>The order I assembled it in</h2>
+<p>The order of assembly mattered, because some parts are hard to reach once others are in place.</p>
+<ol>
+<li><b>Load cell first.</b> I screwed the fixed end to the base through its spacer and checked with a ruler that the bar was level and its arrow pointed down. Everything about the scale depends on this one joint being solid.</li>
+<li><b>HX711 next, before the tray.</b> With the tray off, the load cell's four leads are easy to route along the base and screw into the HX711's terminals. I ran <code>hx711.py</code> at this point and pressed the bare bar with a finger to see the numbers rise.</li>
+<li><b>Tray.</b> Fixed to the free end through the second spacer, then checked for the 5 mm gap all round by sliding a folded card around its edge.</li>
+<li><b>Camera and light.</b> Clamped the camera to the arm, stuck the LED strip beside it, clipped both cables down the post. I looked at a test photo to centre the tray in the picture before tightening the clamp.</li>
+<li><b>Screen and Pi last.</b> The Pi goes onto the back of the screen with the ribbon and the two power jumpers, then the screen onto its slanted mount, then the four HX711 jumpers and the two USB plugs.</li>
+<li><b>Calibrate only after everything is fixed.</b> Any change to the tray, the screws or the cables can shift the zero or the slope, so <code>calibrate.py</code> is the very last step.</li>
+</ol>
+<div class="box why"><div class="label">Why test each part as it goes in?</div><p>A fault found right after fitting a part has one possible cause: that part. The same fault found when the whole kiosk is closed up could be any of ten things, and reaching the load cell means taking the tray off again. Running <code>hx711.py</code> with the tray off, then with the tray on, then <code>camera.py</code>, took five minutes in total and meant that when the app first ran on the finished kiosk, it worked.</p></div>
+
+<h2>What I would build differently</h2>
+<p>Three things about the physical build are fine for a prototype and wrong for a shop. MDF swells if it gets wet, and a vegetable counter gets wet; a product would use plastic or coated metal. The jumper wires on the header can be knocked loose; a product would use a small soldered board or a screw-terminal HAT. And the tray has no cover against wind or a leaning elbow; a real scale has a guard so that only the item can touch the weighing surface. None of these change how the kiosk works, but each one is a way a real shop would break it within a week.</p>
 
 <h2>The finished kiosk, from the customer's side</h2>
 <p>A customer sees a blue tray in front of them, a small camera and light above it, and a touchscreen to the left saying "Place an item". There are no wires on show, no keyboard and no buttons other than those on the screen. The whole kiosk stands on a counter, needs one wall socket, and needs no network to work.</p>

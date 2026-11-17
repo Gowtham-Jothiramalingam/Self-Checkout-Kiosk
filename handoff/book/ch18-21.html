@@ -125,6 +125,7 @@
 </ol>
 <div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>Simulated run: all states reached, bill Rs 40.25 (a real run). On the Pi: power-on to "Place an item" in about 35 s; with the DT wire pulled, "Scale not responding" after 3 s; with the camera covered, the Choose screen with the full list.</p></div>
 <p><b>What I recorded:</b> a video of one customer from "Place an item" to the bill; the journalctl log of the failure tests.</p>
+<div class="box why"><div class="label">Why run the app with a simulated scale first?</div><p>The app's logic (states, thresholds, the bill) has nothing to do with real hardware, and bugs in it are much easier to find at a desk than at the kiosk. With the simulated scale I could put a 412 g item down with one key press, as often as I liked, and watch every state change. When the app later met the real scale, the only new things to check were the two hardware functions. I also broke things on purpose (camera unplugged, DT wire pulled) because a kiosk that only works when everything works is not finished.</p></div>
 
 <h2>Phase 8: full kiosk test</h2>
 <ol>
@@ -211,6 +212,10 @@
 </tbody>
 </table>
 
+<div class="box why"><div class="label">Why does almost every check start with "save it and look"?</div><p>The network, the filter and the app all work on numbers I cannot see while they run. Most of my bugs were found the moment I made them visible: saving the prepared 64 x 64 picture showed the colour swap, logging raw HX711 counts showed the wild readings, printing the shape after each layer showed the size mistake. Guessing from the final symptom ("it says Lemon") almost never worked; looking at the data one step earlier almost always did.</p></div>
+<div class="box why"><div class="label">Why check the hardware before the code when a weight is wrong?</div><p>The weighing code is short and is tested on a laptop with made-up readings, so it rarely changes behaviour by itself. The hardware changes all the time: a cable moves, a screw loosens, the supply sags. When a weight is wrong, the fastest path is the physical one first: is anything touching the tray, are the four HX711 wires firm, is the lightning symbol showing? Only then the code.</p></div>
+<div class="box why"><div class="label">Why do so many rows end in a start-up check?</div><p>Several fixes in the table are checks the app now makes by itself when it starts: every class has a price, the weights file exists and has the right shapes, the camera opens. A problem that stops the kiosk at start-up, with a clear line in the log, is found by the shopkeeper in the morning. The same problem found during a sale is found by a customer.</p></div>
+
 <h2>Design stories</h2>
 <div class="box story"><div class="label">Design story: three devices became one</div><p>Version 1 needed a laptop, an ESP8266 and a phone hotspot all switched on and connected. At the demo, the hotspot's IP address changed once and the laptop could no longer reach the scale until we edited the code. Every extra device was another thing to power, connect and debug. Version 2's main design goal came from that moment: one box, one plug, no network. The Pi was the smallest computer that could do all three jobs, and every other choice followed from fitting the work onto it.</p></div>
 <div class="box story"><div class="label">Design story: detection boxes became classification crops</div><p>The obvious move to the Pi was to run a smaller detector. But the kiosk only ever sees one item on a plain blue tray, so "where is it?" is easy and "what is it?" is the real question. I turned the problem around: a colour mask finds the item, and a small classifier names the crop. The version 1 boxes became the tool for cutting 1,850 training crops. A detector of millions of weights was replaced by a classifier of 80,604, small enough to write and check by hand.</p></div>
@@ -242,6 +247,11 @@
 </table>
 
 <div class="box tip"><div class="label">How to tell it as a story</div><p>"My first version, in a team, used a laptop running YOLOv5, an ESP8266 sending the weight over Wi-Fi, and a phone hotspot. It worked at the demo, but it needed three devices and the model was far too heavy for a small box. For version 2 I put everything on a Raspberry Pi. That forced two big decisions. The scale moved onto the Pi's pins, which brought a Linux timing problem I solved with a median filter. And the detector became a small classifier, because on a plain tray finding the item is easy and naming it is the hard part. Writing it from scratch in NumPy let me run it in 18 ms with no framework, and understand every number in it." It is a story of constraints leading to decisions, which is what interviewers want to hear.</p></div>
+
+<h2>What stayed the same, and why</h2>
+<p>Not everything changed. The camera, its height, the blue tray, the load cell, the HX711 board and the MDF frame all carried over from version 1. Keeping them was a decision too: because the version 2 camera sees exactly what the version 1 camera saw, all 636 labelled photos stayed valid, and I did not have to photograph or label anything again. Tkinter stayed as well, because it comes with Python, needs nothing installed beyond one apt package, and is more than enough for five screens of big buttons. The price list stayed a CSV file with the same prices.</p>
+<div class="box why"><div class="label">Why not change everything at once?</div><p>Every part I kept was a part I did not have to debug again. With the camera, tray and scale hardware fixed, any difference between version 1 and version 2 had to come from the things I changed on purpose: the computer, the model, the weight reading and the app. Changing a few things at a time is slower on paper and much faster in practice, because each new problem has a short list of suspects.</p></div>
+<div class="box why"><div class="label">Why keep the from-scratch CNN if MobileNet would be more accurate?</div><p>The goal of version 2 was a kiosk I fully understand, running on one small computer, and a from-scratch network of 80,604 weights met that goal at 92.6%. A pretrained MobileNet would likely score higher, but I would be back to loading a model I could not explain line by line, with a framework to install on the Pi. I list it as the right choice for a product, and I can say exactly what I would gain (accuracy, more classes) and lose (simplicity, full understanding) by switching.</p></div>
 
 <h2>Limits, said plainly</h2>
 <table>
@@ -286,8 +296,10 @@
 </section>
 <section class="chapter" id="ch21">
 <h1><span class="num">21</span> Interview questions and the one-page cheat sheet</h1>
-<p class="small">Short version: about 70 questions I expect, grouped by topic, each with a short first-person answer I can say in under 30 seconds. Then a one-page cheat sheet with every number, formula and word I need, and the five things to say clearly.</p>
+<p class="small">Short version: 67 questions I expect, grouped by topic, each with a short first-person answer I can say in under 30 seconds. Then a one-page cheat sheet with every number, formula and word I need, and the five things to say clearly.</p>
 <div class="box tip"><div class="label">Interview tip</div><p>Answer first, then the reason, then stop. If the interviewer wants more, they will ask, and the next chapters of this book are behind every answer. When I do not know something, I say what I would do to find out.</p></div>
+<div class="box why"><div class="label">Why practise the answers out loud?</div><p>Reading an answer and saying it are different skills. Out loud, I notice which sentences are too long to say in one breath and which numbers I do not actually remember. Every answer below is short on purpose: a first answer of 20 to 30 seconds leaves the interviewer room to ask the follow-up they care about, and each follow-up is a chapter of this book.</p></div>
+
 <h2>The big picture</h2>
 <p><b>1. What is the project in one sentence?</b><br>A self-checkout kiosk for loose fruit and vegetables: it weighs an item with a load cell, names it with a CNN I wrote from scratch in NumPy, and adds a priced line to an itemised bill on a touchscreen, all on one Raspberry Pi 4.</p>
 <p><b>2. Why does this problem exist?</b><br>Packed goods have barcodes; loose produce does not, and its price depends on weight. Today a staff member weighs it and keys in the item. My kiosk replaces that step.</p>

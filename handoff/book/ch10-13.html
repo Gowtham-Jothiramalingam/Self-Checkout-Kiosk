@@ -57,7 +57,7 @@
 </table>
 <p>The index is the position of the class in the <code>CLASSES</code> list in <code>cnn_numpy.py</code>, and it is also the position of that class's score in the network's 12 outputs. Output number 11 means Tomato because the list says so. The trained weights are tied to this order. If I ever sorted the list differently, every prediction would get the wrong name.</p>
 <div class="box why"><div class="label">Why is the order written down in one place?</div><p>Version 1's class numbers came from the YOLO training file, and the kiosk code had its own list. Two lists that must agree is a classic source of silent bugs. In version 2 the order lives only in <code>CLASSES</code>. The dataset script maps the old 14 version 1 numbers to these 12 by name, and the price table is looked up by name too, so nothing else depends on the numbers.</p></div>
-<p>The classes are not balanced: Brinjal has 280 crops and Pomegranate only 80. Some imbalance is fine; the network still sees 56 pomegranate crops in training. I did not resample or weight the classes, and the per-class results below show the small classes did not suffer: Pomegranate scored 100%.</p>
+<p>The classes are not balanced: Brinjal has 280 crops and Pomegranate only 80. Some imbalance is fine; the network still sees about 50 pomegranate crops in training. I did not resample or weight the classes, and the per-class results below show the small classes did not suffer: Pomegranate scored 100%.</p>
 
 <h2>Splitting by photo, into three piles</h2>
 <p>The crops are split into three piles, each with one job.</p>
@@ -362,8 +362,9 @@
 
 <h2>Loading the weights</h2>
 <p>At start-up the kiosk app builds an empty network and fills it from the file:</p>
-<pre><code>net = Net()                                   # 13 layers with random starting weights
-net.load_weights(CLASSIFIER_DIR / "weights.npz")  # overwrite them with the trained ones</code></pre>
+<pre><code>weights = CLASSIFIER_DIR / "weights.npz"
+self.net = Net()                     # 13 layers with random starting weights
+self.net.load_weights(weights)       # overwrite them with the trained ones</code></pre>
 <p><code>Net()</code> creates the layers with He-initialised random weights, exactly as at the start of training. <code>load_weights</code> then replaces all 10 weight arrays with the trained values. The shape check inside <code>set_weights</code> stops the app with a clear message if the file belongs to a different network. From then on the network object lives in memory for as long as the app runs.</p>
 <div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>Building the network and loading weights.npz took about 0.15 s on the Pi. Importing NumPy and OpenCV took about 1.2 s. Both happen once, at start-up.</p></div>
 
@@ -665,7 +666,7 @@ example: (301,022 - 123,450) / 431.0 = 177,572 / 431.0 = 412.0 g</code></pre>
 </table>
 <p>The wild 2,600 g reading is always at the end of the sorted list, so it is never the middle value. The median does not move. The average jumps to almost 850 g and would stay wrong for five readings until the wild value leaves the window.</p>
 <div class="box why"><div class="label">Why median and not average?</div><p>An average lets every reading pull on the result in proportion to its size, so one absurd value pulls hard. A median only cares about order. As long as fewer than half of the 5 readings are wild (fewer than 3), the median is a real reading. Wild readings come one at a time, minutes apart, so the median of 5 removes every one of them. The average would also need the median's help, so I use the median first and average only later, among cleaned values.</p></div>
-<div class="box why"><div class="label">Why 5 and not 3 or 9?</div><p>A window of 3 also removes a single wild reading, but two wild readings close together (which happened twice in my 30-minute test) would get through. A window of 9 is safer but makes the cleaned value lag further behind a real change: the median only switches to the new weight once more than half the window holds new readings, so 5 readings (0.5 s) for a window of 9 against 3 readings (0.3 s) for a window of 5. 5 was the smallest window that removed every wild reading I recorded.</p></div>
+<div class="box why"><div class="label">Why 5 and not 3 or 9?</div><p>A window of 3 also removes a single wild reading, but two wild readings that fall within three readings of each other would get through. That never happened in my 30-minute test, where every wild reading stood alone, but with a window of 3 it would only take one unlucky pair. A window of 9 is safer but makes the cleaned value lag further behind a real change: the median only switches to the new weight once more than half the window holds new readings, so 5 readings (0.5 s) for a window of 9 against 3 readings (0.3 s) for a window of 5. 5 was the smallest window that removed every wild reading I recorded.</p></div>
 
 <h2>The steady rule</h2>
 <p>Cleaned values still move while an item settles: it rolls a little, the tray rocks, the customer's hand leaves it. I must not take a photo or a price during that time. So the second step asks: are the newest 8 cleaned values all within 2 g of each other? If the biggest minus the smallest is less than 2 g, the weight is steady, and the weight I use is their average.</p>
