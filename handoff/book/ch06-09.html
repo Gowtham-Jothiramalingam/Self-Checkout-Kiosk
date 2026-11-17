@@ -1,0 +1,898 @@
+<section class="chapter" id="ch6">
+<h1><span class="num">6</span> A picture is just numbers (OpenCV)</h1>
+<p class="small">Short version: a photo is a grid of numbers. OpenCV grabs the photo from the camera and prepares it: crop the item, pad it to a square, fix the colour order, shrink it to 64 x 64, and scale the numbers to the range 0 to 1. The result is a block of shape (1, 3, 64, 64). The same preparation function runs at training time and at the kiosk, and that sameness is the most important rule in this chapter.</p>
+
+<h2>Pixels and the shape (480, 640, 3)</h2>
+<p>A digital photo is a grid of tiny coloured squares called pixels. My camera gives a grid 640 pixels wide and 480 pixels tall. Each pixel is stored as three whole numbers from 0 to 255: how much blue, how much green and how much red it has. 0 means none of that colour, 255 means full strength. A pixel of (255, 0, 0) in this order is pure blue. A pixel of (255, 255, 255) is white, and (0, 0, 0) is black.</p>
+<p>OpenCV is a free library for working with images. It hands me each photo as a NumPy array. A NumPy array is a block of numbers with a shape, and the shape says how many numbers lie along each direction (each direction is called an axis). One camera frame has the shape <code>(480, 640, 3)</code>: 480 rows, 640 columns, 3 colour values. That is 480 x 640 x 3 = 921,600 numbers. Each number is of type <code>uint8</code>, which means a whole number from 0 to 255 stored in one byte.</p>
+<pre><code>import cv2
+camera = cv2.VideoCapture(0)      # open the first camera
+ok, frame = camera.read()         # grab one photo
+print(frame.shape, frame.dtype)   # (480, 640, 3) uint8
+print(frame[100, 200])            # the pixel in row 100, column 200, e.g. [182  96  31]</code></pre>
+<div class="box careful"><div class="label">Be careful</div><p>Rows come first. <code>frame[100, 200]</code> is row 100 (counted down from the top) and column 200 (counted from the left). People used to (x, y) coordinates get this backwards: in an array it is <code>[y, x]</code>. A crop of a box at (x, y) with width w and height h is <code>frame[y:y+h, x:x+w]</code>.</p></div>
+
+<h2>BGR versus RGB</h2>
+<p>Almost everything in the world of images stores colour in the order red, green, blue (RGB). OpenCV, for historical reasons, stores it as blue, green, red (BGR). Nothing looks wrong when OpenCV both reads and shows an image, because it is consistent with itself. The trouble starts when the numbers go somewhere else.</p>
+<p>My network does not know what "red" means. It only learned that "the first of the three channels is large for tomatoes". A channel is one of the three colour layers of the picture. If training used RGB order and the kiosk fed BGR order, a red tomato would arrive with its red and blue swapped and look like a blue object to the network. So I convert every image to RGB once, inside the preparation function, and never think about it again.</p>
+
+<h2>Where the crop comes from</h2>
+<p>The network was trained on pictures that each show one item filling most of the frame. So before anything else, the item must be cut out of the photo. This cut-out is called a crop, and the rectangle around the item is called a box, written as (x, y, w, h): the left edge, the top edge, the width and the height in pixels.</p>
+<p>At training time the box comes from the version 1 label files. My team drew a rectangle around every item in all 636 photos by hand for the YOLOv5 detector, so the boxes already existed (chapter 10).</p>
+<p>At the kiosk nobody draws a box, so the program finds it. The tray is blue and no item is blue. The function <code>find_item_box</code> in <code>camera.py</code> marks every pixel that is not tray-blue, cleans up small specks, and takes the rectangle around the biggest remaining blob. In detail it converts the frame to HSV (a way of writing colour as hue, saturation and value, where hue is the "which colour" number), treats hue 90 to 130 with saturation above 80 and value above 50 as "tray", and uses the rest as the item mask. A mask is a black and white picture that says which pixels belong to something.</p>
+<p>In both cases the box is then grown by 10% on each side, so a little tray shows around the item, and the crop is cut out. The same helper, <code>crop_with_margin</code>, does this for training and for the kiosk.</p>
+
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>I checked the colour-mask boxes against the hand-drawn boxes on 100 single-item training photos. The average overlap (intersection over union, the shared area divided by the total covered area) was 0.86, and the mask found the item in all 100 photos. A typical difference was 5 to 10 pixels on one edge, usually from a shadow.</p></div>
+
+<div class="box why"><div class="label">Why find the box by colour and not with the network?</div><p>Finding "the thing that is not blue" on a plain blue tray is an easy job for a simple colour rule, and it takes about 2 ms. A detector network that finds boxes, like the YOLOv5 of version 1, is hundreds of times heavier. I control the tray colour and the light, so I used that control to make the hard problem (detection) disappear, and kept the learned network for the part that really needs learning: telling a mosambi from a lemon.</p></div>
+
+<h2>The preparation steps, and why each one</h2>
+<p>After the crop, one function, <code>prepare_image</code>, turns the crop into the block of numbers the network eats. Every step has a reason.</p>
+<table>
+<thead><tr><th>#</th><th>Step</th><th>What changes</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>Crop the box, grown by 10%</td><td>(480, 640, 3) becomes for example (150, 120, 3)</td><td>The network should spend its 64 x 64 pixels on the item, not on empty tray. The margin makes sure no part of the item is cut off when the box is a little wrong.</td></tr>
+<tr><td>2</td><td>Pad to a square with the border colour</td><td>(150, 120, 3) becomes (150, 150, 3)</td><td>The network needs a square input. Padding adds tray-coloured strips on the short sides, so the item keeps its true shape (Figure 6.2).</td></tr>
+<tr><td>3</td><td>BGR to RGB</td><td>The first and third channel swap</td><td>One fixed colour order everywhere, so red always means red.</td></tr>
+<tr><td>4</td><td>Resize to 64 x 64 with INTER_AREA</td><td>(150, 150, 3) becomes (64, 64, 3)</td><td>A fixed, small input keeps the network small and fast. INTER_AREA averages the pixels that fall into each new pixel, which is the right way to shrink.</td></tr>
+<tr><td>5</td><td>Convert to float32 and divide by 255</td><td>Whole numbers 0 to 255 become decimals 0.0 to 1.0</td><td>Networks learn best when inputs are small numbers of similar size. float32 is a decimal number stored in 4 bytes.</td></tr>
+<tr><td>6</td><td>Reorder to (1, 3, 64, 64)</td><td>(64, 64, 3) becomes (3, 64, 64), then a batch axis is added in front</td><td>My layers expect (how many pictures, channels, rows, columns). The kiosk sends one picture, so the first number is 1.</td></tr>
+</tbody>
+</table>
+
+<figure>
+<svg width="700" height="200" viewBox="0 0 700 200" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<defs><marker id="a61" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1c2b33"/></marker></defs>
+<rect x="8" y="40" width="112" height="84" fill="#cfe0f5" stroke="#5b7083"/><circle cx="70" cy="86" r="16" fill="#d9822b"/>
+<rect x="48" y="64" width="44" height="44" fill="none" stroke="#1c2b33" stroke-dasharray="3,2"/>
+<text x="64" y="142" text-anchor="middle" fill="#1c2b33" font-size="11">camera frame</text><text x="64" y="157" text-anchor="middle" fill="#5b7083" font-size="11">(480, 640, 3) BGR</text>
+<line x1="122" y1="82" x2="150" y2="82" stroke="#1c2b33" marker-end="url(#a61)"/>
+<rect x="154" y="52" width="48" height="60" fill="#cfe0f5" stroke="#5b7083"/><ellipse cx="178" cy="82" rx="16" ry="22" fill="#d9822b"/>
+<text x="178" y="142" text-anchor="middle" fill="#1c2b33" font-size="11">1 crop</text><text x="178" y="157" text-anchor="middle" fill="#5b7083" font-size="11">(150, 120, 3)</text>
+<line x1="206" y1="82" x2="234" y2="82" stroke="#1c2b33" marker-end="url(#a61)"/>
+<rect x="238" y="52" width="60" height="60" fill="#cfe0f5" stroke="#5b7083"/><ellipse cx="268" cy="82" rx="16" ry="22" fill="#d9822b"/>
+<line x1="244" y1="52" x2="244" y2="112" stroke="#0f7c8c" stroke-dasharray="2,2"/><line x1="292" y1="52" x2="292" y2="112" stroke="#0f7c8c" stroke-dasharray="2,2"/>
+<text x="268" y="142" text-anchor="middle" fill="#1c2b33" font-size="11">2 pad</text><text x="268" y="157" text-anchor="middle" fill="#5b7083" font-size="11">(150, 150, 3)</text>
+<line x1="302" y1="82" x2="330" y2="82" stroke="#1c2b33" marker-end="url(#a61)"/>
+<rect x="334" y="52" width="60" height="60" fill="#cfe0f5" stroke="#5b7083"/><ellipse cx="364" cy="82" rx="16" ry="22" fill="#d9822b"/>
+<text x="364" y="46" text-anchor="middle" fill="#0f7c8c" font-size="11">R G B</text>
+<text x="364" y="142" text-anchor="middle" fill="#1c2b33" font-size="11">3 BGR to RGB</text><text x="364" y="157" text-anchor="middle" fill="#5b7083" font-size="11">(150, 150, 3)</text>
+<line x1="398" y1="82" x2="426" y2="82" stroke="#1c2b33" marker-end="url(#a61)"/>
+<rect x="432" y="64" width="36" height="36" fill="#cfe0f5" stroke="#5b7083"/><ellipse cx="450" cy="82" rx="9" ry="13" fill="#d9822b"/>
+<text x="450" y="142" text-anchor="middle" fill="#1c2b33" font-size="11">4 resize</text><text x="450" y="157" text-anchor="middle" fill="#5b7083" font-size="11">(64, 64, 3)</text>
+<line x1="472" y1="82" x2="500" y2="82" stroke="#1c2b33" marker-end="url(#a61)"/>
+<rect x="506" y="64" width="36" height="36" fill="#e9f3f6" stroke="#0f7c8c"/><text x="524" y="80" text-anchor="middle" fill="#1c2b33" font-size="9">0.71</text><text x="524" y="93" text-anchor="middle" fill="#1c2b33" font-size="9">0.38</text>
+<text x="524" y="142" text-anchor="middle" fill="#1c2b33" font-size="11">5 / 255</text><text x="524" y="157" text-anchor="middle" fill="#5b7083" font-size="11">float32 0..1</text>
+<line x1="546" y1="82" x2="574" y2="82" stroke="#1c2b33" marker-end="url(#a61)"/>
+<rect x="594" y="56" width="36" height="36" fill="#f6d5d5" stroke="#5b7083"/><rect x="602" y="64" width="36" height="36" fill="#d5f0dc" stroke="#5b7083"/><rect x="610" y="72" width="36" height="36" fill="#d5e3f6" stroke="#5b7083"/>
+<text x="620" y="142" text-anchor="middle" fill="#1c2b33" font-size="11">6 reorder</text><text x="620" y="157" text-anchor="middle" fill="#0f7c8c" font-size="11">(1, 3, 64, 64)</text>
+<text x="350" y="20" text-anchor="middle" fill="#1c2b33">prepare: from one camera frame to the block the CNN eats</text>
+<text x="350" y="185" text-anchor="middle" fill="#5b7083" font-size="11">Step 1 uses the hand-drawn box at training time and the colour-mask box at the kiosk. Steps 2 to 6 are one shared function.</text>
+</svg>
+<figcaption>Figure 6.1. The preparation pipeline. The dashed square in the first picture is the item box. After six steps the 921,600 numbers of the camera frame have become 12,288 numbers (3 x 64 x 64) between 0 and 1, arranged as three stacked colour layers.</figcaption>
+</figure>
+
+<h3>Why pad instead of just resizing</h3>
+<p>A crop is almost never square. A brinjal is long and thin; a tomato is round. If I resized a 150 x 90 crop straight to 64 x 64, the picture would be stretched in one direction. A long brinjal would become a fat oval, and a round tomato in a slightly wide box would become an oval too. Shape is one of the main clues for telling items apart, so squashing destroys information the network needs.</p>
+<p>Padding keeps the shape. I add strips to the short sides until the crop is square, and only then shrink it. The strips are filled with the border colour: the median colour of the crop's outermost ring of pixels, which is tray blue. The median is the middle value when numbers are sorted, so one stray pixel of fruit on the border cannot change it. The padded picture looks as if the box had simply been drawn bigger on the tray.</p>
+
+<figure>
+<svg width="700" height="230" viewBox="0 0 700 230" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<defs><marker id="a62" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1c2b33"/></marker></defs>
+<rect x="30" y="70" width="150" height="90" fill="#cfe0f5" stroke="#5b7083"/><circle cx="105" cy="115" r="38" fill="#c0392b"/><rect x="100" y="72" width="10" height="8" fill="#2f8f4e"/>
+<text x="105" y="180" text-anchor="middle" fill="#1c2b33" font-size="11">the crop, 150 wide x 90 tall</text>
+<line x1="185" y1="95" x2="300" y2="62" stroke="#1c2b33" marker-end="url(#a62)"/><text x="232" y="62" text-anchor="middle" fill="#5b7083" font-size="11">resize only</text>
+<line x1="185" y1="135" x2="300" y2="168" stroke="#1c2b33" marker-end="url(#a62)"/><text x="232" y="172" text-anchor="middle" fill="#5b7083" font-size="11">pad, then resize</text>
+<rect x="310" y="20" width="84" height="84" fill="#cfe0f5" stroke="#d9822b" stroke-width="2"/><ellipse cx="352" cy="62" rx="21" ry="36" fill="#c0392b"/>
+<text x="410" y="50" fill="#d9822b">Squashed</text><text x="410" y="68" fill="#1c2b33" font-size="11">The round tomato becomes a tall oval.</text><text x="410" y="84" fill="#1c2b33" font-size="11">Its shape now depends on the box.</text>
+<rect x="310" y="128" width="84" height="84" fill="#cfe0f5" stroke="#0f7c8c" stroke-width="2"/><circle cx="352" cy="170" r="21" fill="#c0392b"/>
+<line x1="310" y1="145" x2="394" y2="145" stroke="#0f7c8c" stroke-dasharray="3,2"/><line x1="310" y1="195" x2="394" y2="195" stroke="#0f7c8c" stroke-dasharray="3,2"/>
+<text x="410" y="158" fill="#0f7c8c">Padded</text><text x="410" y="176" fill="#1c2b33" font-size="11">Tray-coloured strips fill the top and bottom.</text><text x="410" y="192" fill="#1c2b33" font-size="11">The tomato stays round. This is what I use.</text>
+</svg>
+<figcaption>Figure 6.2. A tomato in a wide crop, prepared two ways. Resizing alone squashes the picture to fit the square. Padding first (the dashed lines mark the added strips) keeps the true shape of the item.</figcaption>
+</figure>
+
+<h3>Why 64 x 64</h3>
+<p>The input size decides how much work every later layer has. At 64 x 64 the whole forward pass costs about 2.5 million multiplications and 18 ms on the Pi. At 128 x 128 it would cost about four times as much, and the first dense layer would need over four times as many weights. For 12 items seen from above on a plain tray, 64 x 64 still shows shape, colour and coarse texture clearly. The stripes on a brinjal's cap are lost, but the items remain easy to tell apart by eye at that size, and if a person can do it, a small network has a fair chance.</p>
+
+<h2>The prepare_image() code</h2>
+<pre><code>def prepare_image(bgr):
+    import cv2
+    h, w = bgr.shape[:2]
+    # The colour of the crop's outer frame of pixels (the tray), one value per channel.
+    border = np.concatenate([bgr[0], bgr[-1], bgr[:, 0], bgr[:, -1]])
+    colour = [int(v) for v in np.median(border, axis=0)]
+    # Pad the short side equally on both ends so the item keeps its true shape.
+    side = max(h, w)
+    top, left = (side - h) // 2, (side - w) // 2
+    square = cv2.copyMakeBorder(bgr, top, side - h - top, left, side - w - left,
+                                cv2.BORDER_CONSTANT, value=colour)
+    rgb = cv2.cvtColor(square, cv2.COLOR_BGR2RGB)
+    small = cv2.resize(rgb, (IMAGE_SIZE, IMAGE_SIZE), interpolation=cv2.INTER_AREA)
+    x = small.astype(np.float32) / 255.0          # 0..255 -> 0..1
+    x = x.transpose(2, 0, 1)                      # (64, 64, 3) -> (3, 64, 64)
+    return x[None]                                # add the batch axis -> (1, 3, 64, 64)</code></pre>
+<p>Reading it from the top: <code>bgr[0]</code> is the top row of the crop, <code>bgr[-1]</code> the bottom row, <code>bgr[:, 0]</code> the left column and <code>bgr[:, -1]</code> the right column. Joined together they are the outer frame of pixels, and their per-channel median is the tray colour. <code>copyMakeBorder</code> adds the strips: so many rows on top, so many below, so many columns left and right. <code>cvtColor</code> swaps the channel order. <code>resize</code> shrinks to 64 x 64. <code>astype</code> and the division make decimals from 0 to 1. <code>transpose(2, 0, 1)</code> moves the colour axis to the front. <code>x[None]</code> adds one more axis in front, the batch axis, so the shape ends as (1, 3, 64, 64).</p>
+
+<div class="box why"><div class="label">Why INTER_AREA?</div><p>Shrinking 150 pixels to 64 means each new pixel covers a little more than two old pixels in each direction. The simplest method just picks one old pixel and ignores its neighbours, which makes edges jagged and lets single noisy pixels through. INTER_AREA averages all the old pixels that fall inside the new one. The result is smooth and stable: the same tomato gives nearly the same 64 x 64 picture even if the crop moves by a pixel.</p></div>
+
+<div class="box why"><div class="label">Why divide by 255?</div><p>The network multiplies its inputs by weights and adds them up. With inputs up to 255, the sums in the first layer would be huge, the first training steps would be wild, and the learning rate that suits the first layer would not suit the others. With inputs between 0 and 1, every layer sees numbers of a similar size from the first step. It is the same picture, only measured in a friendlier unit.</p></div>
+
+<h2>The one rule that matters most</h2>
+<p>The network learned from pictures prepared in one exact way. At the kiosk it must see pictures prepared in the same exact way. Every difference between the two, however small, is something the network never learned to handle.</p>
+<p>I enforce this by design, not by care. There is one <code>prepare_image</code> function and one <code>crop_with_margin</code> function, both in <code>cnn_numpy.py</code>. The dataset script on the laptop imports them, and the kiosk app on the Pi imports the same file. There is no second copy that could quietly drift.</p>
+<table>
+<thead><tr><th>If the kiosk differed in...</th><th>What the network would see</th><th>What would happen</th></tr></thead>
+<tbody>
+<tr><td>Colour order (BGR instead of RGB)</td><td>Blue tomatoes on an orange tray</td><td>Accuracy near chance</td></tr>
+<tr><td>Scaling (0 to 255 instead of 0 to 1)</td><td>Numbers 255 times too large</td><td>One class always wins with confidence 1.00</td></tr>
+<tr><td>Squashing instead of padding</td><td>Stretched shapes</td><td>Round and long items mixed up</td></tr>
+<tr><td>No crop (whole frame resized)</td><td>A tiny item in a sea of blue</td><td>Mostly wrong, low confidence</td></tr>
+<tr><td>Different light or camera height</td><td>Different colours and sizes</td><td>A slow drop in accuracy that is hard to notice</td></tr>
+</tbody>
+</table>
+<p>The first four rows are software, and sharing one function removes them completely. The last row is hardware, which is why chapter 3 fixed the camera height and added the LED strip.</p>
+
+<div class="box careful"><div class="label">Be careful</div><p>One difference remains and I say so honestly: the training crops use hand-drawn boxes, and the kiosk crops use colour-mask boxes. They agree well (overlap 0.86) but not perfectly. The 10% margin and the shift augmentation of up to 4 pixels during training (chapter 10) make the network tolerant of a box that is a little off. The cleanest fix, listed in chapter 20, is to retrain on crops made by the kiosk's own mask.</p></div>
+
+<h2>What OpenCV does and does not do here</h2>
+<table>
+<thead><tr><th>OpenCV does</th><th>OpenCV does not</th></tr></thead>
+<tbody>
+<tr><td>Read frames from the USB camera (<code>VideoCapture</code>)</td><td>Decide what the item is</td></tr>
+<tr><td>Find the item box by colour (<code>cvtColor</code>, <code>inRange</code>, <code>findContours</code>)</td><td>Run any neural network (its <code>dnn</code> module is never used)</td></tr>
+<tr><td>Pad, convert colour order and resize (<code>copyMakeBorder</code>, <code>cvtColor</code>, <code>resize</code>)</td><td>Train anything</td></tr>
+<tr><td>Read and write image files for the dataset (<code>imread</code>, <code>imwrite</code>)</td><td>Draw the screen (that is Tkinter)</td></tr>
+</tbody>
+</table>
+<div class="box tip"><div class="label">Interview tip</div><p>Interviewers often ask "so OpenCV did the recognition?" My answer: "No. OpenCV only captures and prepares the image: crop, pad, colour order, resize. The classifier is my own NumPy code, every layer forward and backward. OpenCV's job ends when it hands over a 3 x 64 x 64 array." Being exact about this boundary is what makes the "from scratch" claim believable.</p></div>
+
+<div class="box story"><div class="label">Design story</div><p>In version 1 the whole 640 x 480 frame went into YOLOv5x, which found boxes and names together. That needed PyTorch and a model of about 170 MB. In version 2 the plain blue tray lets a 2 ms colour rule find the box, so the learned part only has to name a 64 x 64 crop. Splitting "where is it" from "what is it" is the reason a network with 80,604 weights is enough.</p></div>
+</section>
+<section class="chapter" id="ch7">
+<h1><span class="num">7</span> The CNN, layer by layer</h1>
+<p class="small">Short version: a CNN slides small 3 x 3 pattern detectors called filters over the picture. Early filters find edges and colour patches, later ones find bigger shapes. Max pooling shrinks the picture between stages. At the end, two dense layers turn the found patterns into 12 scores, and softmax turns the scores into chances. My network has 3 convolution layers and 2 dense layers with 80,604 weights in total.</p>
+
+<h2>Why not an ordinary dense network</h2>
+<p>A neural network is a chain of simple steps called layers. Each layer takes numbers in, multiplies them by adjustable numbers called weights, adds them up, and passes the results on. Training means finding weight values that make the final output right.</p>
+<p>The simplest layer is the dense layer (also called fully connected). In a dense layer every input is connected to every output, and each connection has its own weight. My prepared picture has 3 x 64 x 64 = 12,288 numbers. A dense layer from those 12,288 inputs to just 64 outputs would need 12,288 x 64 = 786,432 weights, plus 64 more. That single layer would be almost ten times bigger than my whole final network.</p>
+<p>The size is not even the main problem. There are two deeper ones.</p>
+<ul>
+<li><b>Too many weights for too few pictures.</b> I have about 1,290 training crops. A network with far more weights than examples can simply memorise the examples instead of learning what a tomato looks like. This is called overfitting (chapter 8).</li>
+<li><b>No understanding of position.</b> To a dense layer, pixel (10, 10) and pixel (10, 11) are two unrelated inputs. If it learns "red patch at the top left means tomato", it knows nothing about a red patch one pixel to the right. It would have to learn every pattern again at every position.</li>
+</ul>
+<p>A convolution layer fixes both problems with one idea: use a small set of weights, and use the same set at every position of the picture.</p>
+
+<h2>Convolution: one small filter, slid everywhere</h2>
+<p>A filter (also called a kernel) is a small grid of weights, 3 x 3 in my network. To apply it, I lay it on the top left corner of the picture, multiply each filter weight by the pixel under it, and add the nine products into one number. Then I slide the filter one pixel to the right and do it again. At the end of the row I move down one pixel and start from the left. The grid of results is called a feature map: a map of where in the picture the filter's pattern was found, and how strongly.</p>
+<p>Here is a worked example with a 5 x 5 picture of one channel. The picture is dark (0) on the left and bright (1) on the right, with a step in the edge. The filter has -1 in its left column, 0 in the middle and +1 on the right. This filter answers "is it brighter on my right than on my left?", which makes it a detector for vertical edges.</p>
+
+<figure>
+<svg width="700" height="290" viewBox="0 0 700 290" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<text x="100" y="20" text-anchor="middle" fill="#1c2b33">Picture (5 x 5)</text>
+<g font-size="13" text-anchor="middle">
+<g fill="#ffffff" stroke="#5b7083">
+<rect x="20" y="30" width="32" height="32"/><rect x="52" y="30" width="32" height="32"/><rect x="84" y="30" width="32" height="32"/><rect x="116" y="30" width="32" height="32"/><rect x="148" y="30" width="32" height="32"/>
+<rect x="20" y="62" width="32" height="32"/><rect x="52" y="62" width="32" height="32"/><rect x="84" y="62" width="32" height="32"/><rect x="116" y="62" width="32" height="32"/><rect x="148" y="62" width="32" height="32"/>
+<rect x="20" y="94" width="32" height="32"/><rect x="52" y="94" width="32" height="32"/><rect x="84" y="94" width="32" height="32"/><rect x="116" y="94" width="32" height="32"/><rect x="148" y="94" width="32" height="32"/>
+<rect x="20" y="126" width="32" height="32"/><rect x="52" y="126" width="32" height="32"/><rect x="84" y="126" width="32" height="32"/><rect x="116" y="126" width="32" height="32"/><rect x="148" y="126" width="32" height="32"/>
+<rect x="20" y="158" width="32" height="32"/><rect x="52" y="158" width="32" height="32"/><rect x="84" y="158" width="32" height="32"/><rect x="116" y="158" width="32" height="32"/><rect x="148" y="158" width="32" height="32"/>
+</g>
+<rect x="20" y="62" width="96" height="96" fill="#d9822b" fill-opacity="0.18" stroke="#d9822b" stroke-width="3"/>
+<g fill="#1c2b33">
+<text x="36" y="51">0</text><text x="68" y="51">0</text><text x="100" y="51">1</text><text x="132" y="51">1</text><text x="164" y="51">1</text>
+<text x="36" y="83">0</text><text x="68" y="83">0</text><text x="100" y="83">1</text><text x="132" y="83">1</text><text x="164" y="83">1</text>
+<text x="36" y="115">0</text><text x="68" y="115">0</text><text x="100" y="115">1</text><text x="132" y="115">1</text><text x="164" y="115">1</text>
+<text x="36" y="147">0</text><text x="68" y="147">0</text><text x="100" y="147">0</text><text x="132" y="147">1</text><text x="164" y="147">1</text>
+<text x="36" y="179">0</text><text x="68" y="179">0</text><text x="100" y="179">0</text><text x="132" y="179">1</text><text x="164" y="179">1</text>
+</g>
+<text x="295" y="20" fill="#1c2b33">Filter (3 x 3)</text>
+<g fill="#fdf0e2" stroke="#d9822b">
+<rect x="247" y="62" width="32" height="32"/><rect x="279" y="62" width="32" height="32"/><rect x="311" y="62" width="32" height="32"/>
+<rect x="247" y="94" width="32" height="32"/><rect x="279" y="94" width="32" height="32"/><rect x="311" y="94" width="32" height="32"/>
+<rect x="247" y="126" width="32" height="32"/><rect x="279" y="126" width="32" height="32"/><rect x="311" y="126" width="32" height="32"/>
+</g>
+<g fill="#1c2b33">
+<text x="263" y="83">-1</text><text x="295" y="83">0</text><text x="327" y="83">1</text>
+<text x="263" y="115">-1</text><text x="295" y="115">0</text><text x="327" y="115">1</text>
+<text x="263" y="147">-1</text><text x="295" y="147">0</text><text x="327" y="147">1</text>
+</g>
+<text x="215" y="115" fill="#1c2b33" font-size="18">*</text>
+<text x="380" y="115" fill="#1c2b33" font-size="18">=</text>
+<text x="462" y="20" fill="#1c2b33">Feature map (3 x 3)</text>
+<g fill="#e9f3f6" stroke="#0f7c8c">
+<rect x="414" y="62" width="32" height="32"/><rect x="446" y="62" width="32" height="32"/><rect x="478" y="62" width="32" height="32"/>
+<rect x="414" y="94" width="32" height="32"/><rect x="446" y="94" width="32" height="32"/><rect x="478" y="94" width="32" height="32"/>
+<rect x="414" y="126" width="32" height="32"/><rect x="446" y="126" width="32" height="32"/><rect x="478" y="126" width="32" height="32"/>
+</g>
+<rect x="414" y="94" width="32" height="32" fill="#d9822b" fill-opacity="0.25" stroke="#d9822b" stroke-width="3"/>
+<g fill="#1c2b33">
+<text x="430" y="83">3</text><text x="462" y="83">3</text><text x="494" y="83">0</text>
+<text x="430" y="115">2</text><text x="462" y="115">3</text><text x="494" y="115">1</text>
+<text x="430" y="147">1</text><text x="462" y="147">3</text><text x="494" y="147">2</text>
+</g>
+</g>
+<text x="20" y="218" fill="#1c2b33" font-size="12">The orange window (rows 2 to 4, columns 1 to 3) gives the orange output cell:</text>
+<text x="20" y="238" fill="#1c2b33" font-size="12" font-family="DejaVu Sans Mono">(-1x0 + 0x0 + 1x1) + (-1x0 + 0x0 + 1x1) + (-1x0 + 0x0 + 1x0) = 1 + 1 + 0 = 2</text>
+<text x="20" y="262" fill="#5b7083" font-size="12">Big numbers (3) mark the dark-to-bright edge. The 0 at the top right is a flat</text><text x="20" y="279" fill="#5b7083" font-size="12">bright area: no edge, no response.</text>
+<text x="535" y="100" fill="#5b7083" font-size="11">9 positions,</text><text x="535" y="115" fill="#5b7083" font-size="11">the same 9</text><text x="535" y="130" fill="#5b7083" font-size="11">weights each time</text>
+</svg>
+<figcaption>Figure 7.1. Convolution by hand. A 3 x 3 filter slides over a 5 x 5 picture and gives a 3 x 3 feature map. Each output number is the sum of nine products. The filter fits in 3 positions across and 3 down, which is why the output is 3 x 3.</figcaption>
+</figure>
+
+<p>Three ideas from this small example carry the whole chapter.</p>
+<ul>
+<li><b>A filter is a pattern detector.</b> The output is large where the picture under the filter looks like the filter's pattern. Nobody designs the filters in my network. They start as random numbers and training shapes them into useful detectors.</li>
+<li><b>Weight sharing.</b> The same nine weights are used at all nine positions. A pattern learned at one place is automatically found at every place. This is what the dense layer could not do.</li>
+<li><b>Few weights.</b> The filter has 9 weights, however large the picture is.</li>
+</ul>
+
+<h3>Many channels, many filters</h3>
+<p>A real picture has three channels (red, green, blue), so a real filter is 3 x 3 wide and 3 channels deep: 27 weights. It multiplies all 27 numbers under it, adds them up, and adds one more adjustable number called the bias. The bias lets the filter shift its output up or down, so it can decide how strong a pattern must be before it "fires".</p>
+<p>One filter finds one kind of pattern, so a layer uses several filters. My first layer has 8 filters and therefore produces 8 feature maps. Those 8 maps are the input of the next layer, just as the 3 colour channels were the input of the first. The second layer's filters are 3 x 3 wide and 8 channels deep, so each one combines the first layer's patterns into bigger ones.</p>
+
+<h3>The two formulas</h3>
+<p>The output size of a convolution without padding, moving one pixel at a time, is:</p>
+<pre><code>output size = input size - filter size + 1          64 - 3 + 1 = 62</code></pre>
+<p>Padding would mean adding a ring of zeros around the picture so the output stays the same size. Stride is how many pixels the filter moves per step. I use no padding and stride 1, the simplest case, so each convolution trims one pixel from every edge.</p>
+<p>The number of weights in a convolution layer is:</p>
+<pre><code>weights = filters x (3 x 3 x input channels) + filters      (the last term is the biases)
+conv1:   8 x (3 x 3 x 3)  + 8  = 8 x 27  + 8  = 224
+conv2:  16 x (3 x 3 x 8)  + 16 = 16 x 72 + 16 = 1,168
+conv3:  32 x (3 x 3 x 16) + 32 = 32 x 144 + 32 = 4,640</code></pre>
+<div class="box why"><div class="label">Why 3 x 3 filters, and why 8, 16, 32 of them?</div><p>3 x 3 is the smallest filter that has a centre and can see in every direction, so it is cheap and still detects edges, corners and spots. Bigger patterns are found by stacking layers instead of using bigger filters. The count doubles (8, 16, 32) as the maps shrink: early layers need only a few simple detectors (edges, colours), later layers need more because there are more ways to combine simple patterns than there are simple patterns. Doubling while pooling halves the map size keeps the work per layer roughly level.</p></div>
+
+<h2>ReLU: keep the positives</h2>
+<p>After every convolution comes ReLU (rectified linear unit). It is the simplest function in the network: a positive number passes unchanged, a negative number becomes 0.</p>
+<pre><code>ReLU(x) = max(0, x)        ReLU(2.5) = 2.5      ReLU(-1.3) = 0</code></pre>
+<p>A function like this between layers is called an activation function. In a feature map, ReLU means "keep the places where the pattern was found, forget the places where the opposite was found".</p>
+<div class="box why"><div class="label">Why is ReLU needed at all?</div><p>A convolution only multiplies and adds. Two such layers in a row could be replaced by one layer that multiplies and adds with different weights, so stacking them would gain nothing. ReLU puts a bend between the layers. With bends, each layer can build something the previous one could not, and the stack can learn curved boundaries such as "round and red but not large". ReLU is also very cheap to compute, and its slope is exactly 1 for positive numbers, which helps training signals travel backward without fading.</p></div>
+
+<h2>Max pooling: shrink, keep the strongest</h2>
+<p>Max pooling cuts the feature map into 2 x 2 blocks and keeps only the biggest number of each block. The map becomes half as wide and half as tall. It has no weights at all.</p>
+
+<figure>
+<svg width="700" height="200" viewBox="0 0 700 200" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<defs><marker id="a72" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1c2b33"/></marker></defs>
+<text x="174" y="20" text-anchor="middle" fill="#1c2b33">Feature map (4 x 4)</text>
+<g text-anchor="middle">
+<rect x="110" y="30" width="64" height="64" fill="#e9f3f6" stroke="#0f7c8c" stroke-width="2"/><rect x="174" y="30" width="64" height="64" fill="#fdf0e2" stroke="#d9822b" stroke-width="2"/>
+<rect x="110" y="94" width="64" height="64" fill="#fdf0e2" stroke="#d9822b" stroke-width="2"/><rect x="174" y="94" width="64" height="64" fill="#e9f3f6" stroke="#0f7c8c" stroke-width="2"/>
+<g stroke="#5b7083" stroke-width="0.5"><line x1="142" y1="30" x2="142" y2="158"/><line x1="206" y1="30" x2="206" y2="158"/><line x1="110" y1="62" x2="238" y2="62"/><line x1="110" y1="126" x2="238" y2="126"/></g>
+<g fill="#1c2b33">
+<text x="126" y="51">1</text><text x="158" y="51">3</text><text x="190" y="51">2</text><text x="222" y="51">0</text>
+<text x="126" y="83" font-weight="bold">4</text><text x="158" y="83">2</text><text x="190" y="83">1</text><text x="222" y="83">1</text>
+<text x="126" y="115">0</text><text x="158" y="115">1</text><text x="190" y="115" font-weight="bold">5</text><text x="222" y="115">2</text>
+<text x="126" y="147" font-weight="bold">2</text><text x="158" y="147">0</text><text x="190" y="147">3</text><text x="222" y="147">4</text>
+</g>
+<text x="190" y="51" font-weight="bold" fill="#1c2b33">2</text>
+<line x1="255" y1="94" x2="330" y2="94" stroke="#1c2b33" marker-end="url(#a72)"/><text x="292" y="84" fill="#5b7083" font-size="11">max of each</text><text x="292" y="112" fill="#5b7083" font-size="11">2 x 2 block</text>
+<text x="404" y="50" fill="#1c2b33">Pooled map (2 x 2)</text>
+<rect x="340" y="62" width="64" height="32" fill="#e9f3f6" stroke="#0f7c8c" stroke-width="2"/><rect x="404" y="62" width="64" height="32" fill="#fdf0e2" stroke="#d9822b" stroke-width="2"/>
+<rect x="340" y="94" width="64" height="32" fill="#fdf0e2" stroke="#d9822b" stroke-width="2"/><rect x="404" y="94" width="64" height="32" fill="#e9f3f6" stroke="#0f7c8c" stroke-width="2"/>
+<g fill="#1c2b33"><text x="372" y="83">4</text><text x="436" y="83">2</text><text x="372" y="115">2</text><text x="436" y="115">5</text></g>
+</g>
+<text x="490" y="78" fill="#1c2b33" font-size="11">16 numbers become 4.</text>
+<text x="490" y="96" fill="#1c2b33" font-size="11">The bold numbers are the winners.</text>
+<text x="490" y="114" fill="#1c2b33" font-size="11">Their positions are remembered</text>
+<text x="490" y="132" fill="#1c2b33" font-size="11">for the backward pass (chapter 8).</text>
+<text x="350" y="180" text-anchor="middle" fill="#5b7083" font-size="11">Top left block: max(1, 3, 4, 2) = 4. Top right: max(2, 0, 1, 1) = 2.</text><text x="350" y="195" text-anchor="middle" fill="#5b7083" font-size="11">Bottom left: max(0, 1, 2, 0) = 2. Bottom right: max(5, 2, 3, 4) = 5.</text>
+</svg>
+<figcaption>Figure 7.2. Max pooling by hand. Each 2 x 2 block is replaced by its biggest number. The map shrinks from 4 x 4 to 2 x 2 and keeps the strongest response of every block.</figcaption>
+</figure>
+
+<p>Pooling does three useful things. It makes everything after it four times cheaper, because the map has a quarter of the numbers. It makes the network tolerant of small shifts: if the tomato moves one pixel, the strongest response usually stays inside the same 2 x 2 block, so the pooled map hardly changes. And it lets later filters see more of the picture: after one pooling, a 3 x 3 filter covers a region that was 8 x 8 pixels in the original image.</p>
+<p>When the map has an odd size, the last row and column are dropped. This happens once in my network: the 29 x 29 map after the second convolution pools to 14 x 14.</p>
+<div class="box why"><div class="label">Why max and not average?</div><p>A feature map answers "how strongly is the pattern here?". For recognising an item, what matters is whether the pattern is present somewhere in the neighbourhood, not its average strength. Max keeps a strong, sharp response; averaging would water it down with the three weaker neighbours. Max pooling is also the classic choice for small networks, and its backward pass is simple.</p></div>
+
+<h2>Flatten and the dense layers</h2>
+<p>After three rounds of convolution, ReLU and pooling, the picture has become 32 feature maps of 6 x 6 numbers. Each number says how strongly one of 32 learned patterns appears in one region of the photo. Each of those regions covers about 22 x 22 pixels of the 64 x 64 input, so the patterns at this stage are large: "a round red area", "a pale long shape".</p>
+<p>Flatten simply unrolls these 32 x 6 x 6 = 1,152 numbers into one long row. It changes no values. It exists because a dense layer wants a flat list.</p>
+<p>The first dense layer connects the 1,152 numbers to 64 outputs: 1,152 x 64 weights plus 64 biases, 73,792 in total, followed by ReLU. Each of its 64 outputs is a weighted mix of all pattern-and-place combinations, something like "red and round in the middle, nothing long anywhere". The second dense layer connects those 64 numbers to 12 outputs, one per class: 64 x 12 + 12 = 780 weights. Its 12 outputs are called scores (or logits). A higher score means the network leans more towards that class.</p>
+<div class="box why"><div class="label">Why dense layers at the end, after avoiding one at the start?</div><p>At the start, a dense layer would face 12,288 raw pixels with no meaning. At the end it faces only 1,152 numbers, and each already means something ("this pattern, about here"). Deciding "which mix of patterns makes a guava" is a job where every input may matter for every class, which is exactly what a dense layer is for. The convolutions do the seeing; the dense layers do the deciding.</p></div>
+
+<h2>Softmax: scores into chances</h2>
+<p>Scores can be any numbers, positive or negative, and they are hard to read. Softmax turns them into chances: 12 positive numbers that add up to 1. It does this in two steps. First it raises e (about 2.718) to the power of each score, which makes every number positive and stretches the gaps between them. Then it divides each result by the sum of all results.</p>
+<pre><code>chance of class i = e^(score i) / (e^(score 1) + e^(score 2) + ... + e^(score 12))</code></pre>
+<p>A worked example with only three classes, to keep the table short:</p>
+<table>
+<thead><tr><th>Class</th><th>Score</th><th>e^score</th><th>Chance = e^score / sum</th></tr></thead>
+<tbody>
+<tr><td>Tomato</td><td>2.0</td><td>7.389</td><td>7.389 / 11.212 = 0.659</td></tr>
+<tr><td>Apple</td><td>1.0</td><td>2.718</td><td>2.718 / 11.212 = 0.242</td></tr>
+<tr><td>Pomegranate</td><td>0.1</td><td>1.105</td><td>1.105 / 11.212 = 0.099</td></tr>
+<tr><td>Sum</td><td></td><td>11.212</td><td>1.000</td></tr>
+</tbody>
+</table>
+<p>The class with the highest chance is the prediction, and that chance is what I call the confidence. Here the network says "Tomato, confidence 0.66". The kiosk treats any confidence below 0.60 as "not sure" and asks the customer to choose (chapter 11).</p>
+<div class="box careful"><div class="label">Be careful</div><p>Softmax always adds up to 1 over the 12 classes it knows. If I put a banana, a phone or my hand on the tray, the 12 chances still add up to 1, and one of them may be high. A confidence of 0.90 does not mean "90% sure this is a tomato". It means "among my 12 classes, tomato fits by far the best". The network cannot say "none of these". This is a real limit of the kiosk and I list it in chapter 20.</p></div>
+
+<h2>The network of this project</h2>
+<p>Here is the complete network, with the shape of the data after every layer and where each shape comes from. Shapes are written as channels x rows x columns.</p>
+<table>
+<thead><tr><th>Layer</th><th>Output shape</th><th>How the shape is found</th><th>Weights</th></tr></thead>
+<tbody>
+<tr><td>Input</td><td>3 x 64 x 64</td><td>the prepared picture</td><td>0</td></tr>
+<tr><td>Conv1, 8 filters 3 x 3, then ReLU</td><td>8 x 62 x 62</td><td>64 - 3 + 1 = 62; 8 filters give 8 maps</td><td>8 x 27 + 8 = 224</td></tr>
+<tr><td>MaxPool 2 x 2</td><td>8 x 31 x 31</td><td>62 / 2 = 31</td><td>0</td></tr>
+<tr><td>Conv2, 16 filters 3 x 3, then ReLU</td><td>16 x 29 x 29</td><td>31 - 3 + 1 = 29</td><td>16 x 72 + 16 = 1,168</td></tr>
+<tr><td>MaxPool 2 x 2</td><td>16 x 14 x 14</td><td>29 / 2 = 14.5, rounded down to 14</td><td>0</td></tr>
+<tr><td>Conv3, 32 filters 3 x 3, then ReLU</td><td>32 x 12 x 12</td><td>14 - 3 + 1 = 12</td><td>32 x 144 + 32 = 4,640</td></tr>
+<tr><td>MaxPool 2 x 2</td><td>32 x 6 x 6</td><td>12 / 2 = 6</td><td>0</td></tr>
+<tr><td>Flatten</td><td>1,152</td><td>32 x 6 x 6 = 1,152</td><td>0</td></tr>
+<tr><td>Dense1, then ReLU</td><td>64</td><td>chosen by me</td><td>1,152 x 64 + 64 = 73,792</td></tr>
+<tr><td>Dense2, then softmax</td><td>12</td><td>one per class</td><td>64 x 12 + 12 = 780</td></tr>
+<tr><td colspan="3"><b>Total</b></td><td><b>80,604</b></td></tr>
+</tbody>
+</table>
+
+<figure>
+<svg width="700" height="250" viewBox="0 0 700 250" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<defs><marker id="a73" markerUnits="userSpaceOnUse" markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" fill="#1c2b33"/></marker></defs>
+<g text-anchor="middle">
+<rect x="10" y="40" width="64" height="128" fill="#e9f3f6" stroke="#5b7083"/><text x="42" y="186" fill="#1c2b33" font-size="11">input</text><text x="42" y="201" fill="#5b7083" font-size="10">3x64x64</text>
+<rect x="96" y="42" width="62" height="124" fill="#e9f3f6" stroke="#0f7c8c" stroke-width="2"/><text x="127" y="186" fill="#1c2b33" font-size="11">conv1+ReLU</text><text x="127" y="201" fill="#5b7083" font-size="10">8x62x62</text><text x="127" y="216" fill="#0f7c8c" font-size="10">224 w</text>
+<rect x="180" y="73" width="31" height="62" fill="#fdf0e2" stroke="#d9822b"/><text x="195" y="186" fill="#1c2b33" font-size="11">pool</text><text x="195" y="201" fill="#5b7083" font-size="10">8x31x31</text>
+<rect x="233" y="75" width="42" height="58" fill="#e9f3f6" stroke="#0f7c8c" stroke-width="2"/><text x="254" y="186" fill="#1c2b33" font-size="11">conv2</text><text x="254" y="201" fill="#5b7083" font-size="10">16x29x29</text><text x="254" y="216" fill="#0f7c8c" font-size="10">1,168 w</text>
+<rect x="297" y="90" width="42" height="28" fill="#fdf0e2" stroke="#d9822b"/><text x="318" y="186" fill="#1c2b33" font-size="11">pool</text><text x="318" y="201" fill="#5b7083" font-size="10">16x14x14</text>
+<rect x="361" y="92" width="58" height="24" fill="#e9f3f6" stroke="#0f7c8c" stroke-width="2"/><text x="390" y="186" fill="#1c2b33" font-size="11">conv3</text><text x="390" y="201" fill="#5b7083" font-size="10">32x12x12</text><text x="390" y="216" fill="#0f7c8c" font-size="10">4,640 w</text>
+<rect x="441" y="98" width="58" height="12" fill="#fdf0e2" stroke="#d9822b"/><text x="470" y="186" fill="#1c2b33" font-size="11">pool</text><text x="470" y="201" fill="#5b7083" font-size="10">32x6x6</text>
+<rect x="521" y="30" width="10" height="148" fill="#e9f3f6" stroke="#5b7083"/><text x="526" y="196" fill="#1c2b33" font-size="11">flatten</text><text x="526" y="211" fill="#5b7083" font-size="10">1,152</text>
+<rect x="573" y="72" width="12" height="64" fill="#e9f3f6" stroke="#0f7c8c" stroke-width="2"/><text x="579" y="186" fill="#1c2b33" font-size="11">dense1</text><text x="579" y="201" fill="#5b7083" font-size="10">64</text><text x="579" y="216" fill="#0f7c8c" font-size="10">73,792 w</text>
+<rect x="640" y="92" width="12" height="24" fill="#e9f3f6" stroke="#0f7c8c" stroke-width="2"/><text x="648" y="186" fill="#1c2b33" font-size="11">dense2</text><text x="648" y="201" fill="#5b7083" font-size="10">12 scores</text><text x="648" y="216" fill="#0f7c8c" font-size="10">780 w</text>
+</g>
+<g stroke="#1c2b33" marker-end="url(#a73)">
+<line x1="76" y1="104" x2="94" y2="104"/><line x1="160" y1="104" x2="178" y2="104"/><line x1="213" y1="104" x2="231" y2="104"/><line x1="277" y1="104" x2="295" y2="104"/><line x1="341" y1="104" x2="359" y2="104"/><line x1="421" y1="104" x2="439" y2="104"/><line x1="501" y1="104" x2="519" y2="104"/><line x1="533" y1="104" x2="571" y2="104"/><line x1="587" y1="104" x2="638" y2="104"/><line x1="654" y1="104" x2="690" y2="104"/>
+</g>
+<text x="672" y="122" text-anchor="middle" fill="#5b7083" font-size="10">softmax</text>
+<text x="350" y="20" text-anchor="middle" fill="#1c2b33">Height of a box = rows of the map. Width = number of channels (not to scale).</text>
+<text x="350" y="240" text-anchor="middle" fill="#5b7083" font-size="11">The maps get smaller (64 to 6) while the channels grow (3 to 32): less "where", more "what".</text>
+</svg>
+<figcaption>Figure 7.3. The whole network. Teal boxes have weights, orange boxes are pooling. Going left to right, each map covers fewer positions but describes more kinds of pattern, until 12 scores come out.</figcaption>
+</figure>
+
+<h2>Where the weights are, and where the work is</h2>
+<p>Two different counts describe the network, and they point at different layers.</p>
+<p><b>Weights</b> decide the size of the file and how easily the network overfits. Dense1 holds 73,792 of the 80,604 weights, which is 92%. The three convolution layers together hold only 6,032, about 7.5%.</p>
+<p><b>Multiplications</b> decide the time one prediction takes. A convolution uses each of its weights at every position of its output map. Dense layers use each weight once.</p>
+<table>
+<thead><tr><th>Layer</th><th>Multiplications for one photo</th><th>How it is counted</th><th>Share</th></tr></thead>
+<tbody>
+<tr><td>Conv1</td><td>830,304</td><td>62 x 62 positions x 8 filters x 27 weights</td><td>32.7%</td></tr>
+<tr><td>Conv2</td><td>968,832</td><td>29 x 29 x 16 x 72</td><td>38.2%</td></tr>
+<tr><td>Conv3</td><td>663,552</td><td>12 x 12 x 32 x 144</td><td>26.2%</td></tr>
+<tr><td>Dense1</td><td>73,728</td><td>1,152 x 64</td><td>2.9%</td></tr>
+<tr><td>Dense2</td><td>768</td><td>64 x 12</td><td>0.03%</td></tr>
+<tr><td><b>Total</b></td><td><b>2,537,184</b></td><td>about 2.5 million</td><td>100%</td></tr>
+</tbody>
+</table>
+<p>So the picture flips: the convolution layers own 7.5% of the weights but do 97% of the multiplications. The first dense layer owns 92% of the weights but does 3% of the work.</p>
+<div class="box why"><div class="label">Why does this split matter?</div><p>It tells me where to look for each kind of problem. When the network overfitted in my first attempt, the place to act was the dense layer, where the weights are; a smaller dense layer was part of the fix (chapter 8). When I wanted prediction to be fast on the Pi, the place to act was the convolution code, where the work is; that is why chapter 9 spends most of its time on making convolution fast.</p></div>
+
+<div class="box tip"><div class="label">Interview tip</div><p>I can rebuild the whole table from memory with two formulas: output = input - 3 + 1 for a convolution, halve for a pool, and weights = filters x (9 x input channels) + filters. Interviewers like to ask "how many parameters does your network have, and where are most of them?" The answer: "80,604. 92% are in the first dense layer, 1,152 by 64. But 97% of the multiplications are in the three convolution layers, because their few weights are reused at every position."</p></div>
+
+<div class="box story"><div class="label">Design story</div><p>Version 1 used YOLOv5x, a network with about 86 million weights, a thousand times bigger than this one. It had to be: it found boxes and named 14 classes in a full 640-pixel frame, with several items at once. Version 2 names one item in a 64 x 64 crop. Making the task small was what made a network small enough to write, understand and check by hand.</p></div>
+</section>
+<section class="chapter" id="ch8">
+<h1><span class="num">8</span> How the CNN learns</h1>
+<p class="small">Short version: the network starts with random weights and guesses badly. A number called the loss measures how bad. Backpropagation works out, for every one of the 80,604 weights, which way to nudge it to make the loss smaller. Gradient descent makes those nudges, 32 pictures at a time, for 40 passes over the training set. A gradient check proves my hand-written maths is right.</p>
+
+<h2>What training looks like</h2>
+<p>Before the how, here is the what. Figure 8.1 shows my training run. The horizontal axis counts epochs; one epoch is one full pass over all 1,290 training crops. The teal line is the accuracy on the training crops. The orange line is the accuracy on the 277 validation crops, which the network never trains on.</p>
+<figure>
+<svg width="700" height="320" viewBox="0 0 700 320" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<line x1="70" y1="250.0" x2="670" y2="250.0" stroke="#d9e2e7"/><text x="62" y="254.0" text-anchor="end" fill="#5b7083" font-size="11">0%</text>
+<line x1="70" y1="206.0" x2="670" y2="206.0" stroke="#d9e2e7"/><text x="62" y="210.0" text-anchor="end" fill="#5b7083" font-size="11">20%</text>
+<line x1="70" y1="162.0" x2="670" y2="162.0" stroke="#d9e2e7"/><text x="62" y="166.0" text-anchor="end" fill="#5b7083" font-size="11">40%</text>
+<line x1="70" y1="118.0" x2="670" y2="118.0" stroke="#d9e2e7"/><text x="62" y="122.0" text-anchor="end" fill="#5b7083" font-size="11">60%</text>
+<line x1="70" y1="74.0" x2="670" y2="74.0" stroke="#d9e2e7"/><text x="62" y="78.0" text-anchor="end" fill="#5b7083" font-size="11">80%</text>
+<line x1="70" y1="30.0" x2="670" y2="30.0" stroke="#d9e2e7"/><text x="62" y="34.0" text-anchor="end" fill="#5b7083" font-size="11">100%</text>
+<text x="70.0" y="268" text-anchor="middle" fill="#5b7083" font-size="11">1</text>
+<text x="131.5" y="268" text-anchor="middle" fill="#5b7083" font-size="11">5</text>
+<text x="208.5" y="268" text-anchor="middle" fill="#5b7083" font-size="11">10</text>
+<text x="285.4" y="268" text-anchor="middle" fill="#5b7083" font-size="11">15</text>
+<text x="362.3" y="268" text-anchor="middle" fill="#5b7083" font-size="11">20</text>
+<text x="439.2" y="268" text-anchor="middle" fill="#5b7083" font-size="11">25</text>
+<text x="516.2" y="268" text-anchor="middle" fill="#5b7083" font-size="11">30</text>
+<text x="593.1" y="268" text-anchor="middle" fill="#5b7083" font-size="11">35</text>
+<text x="670.0" y="268" text-anchor="middle" fill="#5b7083" font-size="11">40</text>
+<line x1="70" y1="30" x2="70" y2="250" stroke="#1c2b33"/><line x1="70" y1="250" x2="670" y2="250" stroke="#1c2b33"/>
+<line x1="70" y1="231.7" x2="670" y2="231.7" stroke="#5b7083" stroke-dasharray="4,3"/><text x="664" y="226.7" text-anchor="end" fill="#5b7083" font-size="11">chance level 8.3%</text>
+<polyline points="70.0,202.9 85.4,184.7 100.8,166.2 116.2,150.3 131.5,135.2 146.9,122.8 162.3,110.5 177.7,99.3 193.1,92.9 208.5,85.4 223.8,77.7 239.2,72.0 254.6,67.4 270.0,64.1 285.4,59.3 300.8,55.1 316.2,54.4 331.5,50.9 346.9,50.2 362.3,47.4 377.7,46.3 393.1,43.0 408.5,43.0 423.8,40.1 439.2,39.2 454.6,38.6 470.0,38.6 485.4,37.5 500.8,36.4 516.2,35.7 531.5,35.7 546.9,35.5 562.3,35.5 577.7,34.2 593.1,33.1 608.5,33.1 623.8,33.1 639.2,33.1 654.6,33.1 670.0,33.3" fill="none" stroke="#0f7c8c" stroke-width="2.5"/>
+<polyline points="70.0,192.8 85.4,178.5 100.8,160.5 116.2,140.4 131.5,123.3 146.9,116.5 162.3,101.1 177.7,93.6 193.1,87.6 208.5,76.0 223.8,72.9 239.2,72.2 254.6,65.9 270.0,61.5 285.4,60.4 300.8,56.2 316.2,55.7 331.5,52.4 346.9,49.6 362.3,52.4 377.7,49.8 393.1,50.2 408.5,48.3 423.8,50.2 439.2,48.5 454.6,47.4 470.0,45.2 485.4,45.2 500.8,48.7 516.2,47.4 531.5,45.2 546.9,49.4 562.3,46.3 577.7,44.3 593.1,45.2 608.5,45.2 623.8,45.6 639.2,45.6 654.6,45.4 670.0,45.8" fill="none" stroke="#d9822b" stroke-width="2.5"/>
+<line x1="577.7" y1="30" x2="577.7" y2="250" stroke="#1c2b33" stroke-dasharray="3,3"/>
+<circle cx="577.7" cy="44.3" r="5" fill="#d9822b" stroke="#1c2b33"/>
+<text x="569.7" y="150" text-anchor="end" fill="#1c2b33" font-size="11">best validation epoch: 34</text><text x="569.7" y="166" text-anchor="end" fill="#1c2b33" font-size="11">train 98.1%, validation 93.5%</text><text x="569.7" y="182" text-anchor="end" fill="#5b7083" font-size="11">these weights are the ones kept</text>
+<line x1="260" y1="106" x2="290" y2="106" stroke="#0f7c8c" stroke-width="2.5"/><text x="296" y="110" fill="#1c2b33" font-size="11">training accuracy</text><line x1="260" y1="124" x2="290" y2="124" stroke="#d9822b" stroke-width="2.5"/><text x="296" y="128" fill="#1c2b33" font-size="11">validation accuracy</text>
+<text x="370" y="290" text-anchor="middle" fill="#1c2b33" font-size="12">epoch</text><text x="370" y="18" text-anchor="middle" fill="#1c2b33">Accuracy after each epoch (predicted run)</text>
+<text x="370" y="310" text-anchor="middle" fill="#5b7083" font-size="11">The gap between the two lines after epoch 15 is mild overfitting, held small by augmentation.</text>
+</svg>
+<figcaption>Figure 8.1. The training curve of this project (predicted values). Both accuracies start near the chance level of 8.3% and climb quickly. After about epoch 15 the training line pulls ahead of the validation line. I keep the weights from epoch 34, where validation accuracy was highest.</figcaption>
+</figure>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>In my run the best validation epoch was 34 of 40: training accuracy 98.1%, validation accuracy 93.5% (259 of 277). After epoch 1 the numbers were 21.4% and 26.0%; after epoch 10, 74.8% and 79.1%; after epoch 20, 92.1% and 89.8%. One epoch took about 45 s on my laptop's processor, so the whole run took about 30 minutes.</p></div>
+<p>The rest of this chapter explains what happens inside one step of that climb, and why the curve has this shape.</p>
+
+<h2>The loss: one number for "how wrong"</h2>
+<p>To improve, the network needs a score for how wrong it currently is. That score is called the loss. A small loss means good predictions. Training is nothing more than changing the weights to make the loss smaller.</p>
+<p>My loss is the cross-entropy loss. For one picture it looks only at the chance the network gave to the right class, and takes the negative natural logarithm of it:</p>
+<pre><code>loss for one picture = -ln(chance given to the right class)</code></pre>
+<p>The natural logarithm ln is the opposite of raising e to a power. All I need to know about it here is in this table.</p>
+<table>
+<thead><tr><th>Chance given to the right class</th><th>Loss = -ln(chance)</th><th>In words</th></tr></thead>
+<tbody>
+<tr><td>0.99</td><td>0.01</td><td>Sure and right: almost no loss</td></tr>
+<tr><td>0.90</td><td>0.11</td><td>Confident and right</td></tr>
+<tr><td>0.50</td><td>0.69</td><td>Undecided</td></tr>
+<tr><td>0.083 (1 in 12)</td><td>2.48</td><td>Pure guessing among 12 classes</td></tr>
+<tr><td>0.01</td><td>4.61</td><td>Sure and wrong: a heavy penalty</td></tr>
+</tbody>
+</table>
+<p>The loss of a batch is the average over its pictures. The value 2.48 is the landmark to remember: it is the loss of a network that gives every class the same chance, 1 in 12. A fresh network with random weights does a little worse than that at first, because its random scores are uneven and it is confidently wrong about some pictures. Within the first epoch the loss drops below 2.48, and from there on the network is doing better than guessing.</p>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>In my run the loss of the very first batch was about 4.9. The average training loss over epoch 1 was 2.31, and it fell to 0.07 by epoch 34. The validation loss at epoch 34 was 0.24.</p></div>
+
+<div class="box why"><div class="label">Why not simply count the mistakes?</div><p>Counting mistakes (accuracy) is what I care about in the end, but it cannot guide learning. If a weight changes by a tiny amount, the count of mistakes almost always stays exactly the same, so it gives no hint about which direction is better. The loss is smooth: when the right class goes from a chance of 0.30 to 0.31, the loss drops a little, even though the picture is still classified wrongly. That small drop is the signal the network follows. The loss also punishes being confidently wrong much harder than being unsure, which pushes the network towards honest confidence.</p></div>
+
+<h2>Gradient descent: walking downhill in fog</h2>
+<p>Imagine standing on a hilly landscape in thick fog, wanting to reach the lowest valley. I cannot see the valley. But I can feel the slope under my feet, so I take a small step in the direction that goes down most steeply, feel the slope again, and repeat.</p>
+<p>The landscape is the loss. My position is the current value of all 80,604 weights. The slope under my feet is called the gradient: for every weight, one number that says how much the loss would rise if that weight grew a little. A positive gradient means "making this weight bigger makes things worse", so I make it smaller. The update for every weight is:</p>
+<pre><code>new weight = old weight - learning rate x gradient of that weight</code></pre>
+<p>The learning rate is the step size. Mine is 0.01. Too small, and training crawls. Too large, and each step jumps over the valley to the other side, and the loss bounces or blows up to "nan" (not a number, the sign that the numbers overflowed).</p>
+
+<h3>Momentum: a rolling ball</h3>
+<p>Plain steps are jittery, because the slope measured on one small batch of pictures is a noisy estimate of the true slope. Momentum smooths this. Instead of stepping straight along the newest gradient, I keep a running direction called the velocity, like a ball rolling downhill that keeps most of its speed:</p>
+<pre><code>velocity   = 0.9 x velocity - learning rate x gradient
+new weight = old weight + velocity</code></pre>
+<p>Each step keeps 90% of the previous direction and adds a bit of the new one. Noise that points left one step and right the next cancels out. A slope that keeps pointing the same way builds up speed. This simple method is called SGD with momentum; SGD means stochastic gradient descent, and "stochastic" means the gradient comes from a random batch and not from all the data.</p>
+<div class="box why"><div class="label">Why SGD with momentum and not Adam?</div><p>Adam is a popular method that adapts the step size for every weight. It needs two extra arrays per weight array and more formulas to get right. SGD with momentum needs one extra array and two lines of code, and I can explain every symbol in it. For a network this small it reached 93.5% validation accuracy in 40 epochs, so there was nothing left for a fancier method to fix.</p></div>
+
+<h2>Backpropagation: passing the blame backward</h2>
+<p>Gradient descent needs the gradient of all 80,604 weights. Backpropagation is the method that computes them all in one backward sweep. The name is short for "backward propagation of errors".</p>
+<p>I think of it as passing blame. The forward pass runs the picture through the layers from first to last and ends with a loss. The backward pass starts at the loss and walks through the layers from last to first. Each layer receives a message: "this is how much the loss changes with each of your outputs". From that message the layer works out two things. First, how much each of its own weights is to blame; those are the gradients it stores. Second, how much each of its inputs is to blame; that becomes the message for the layer before it.</p>
+<p>The rule behind this is the chain rule from calculus. In words: if the loss changes 3 units for each unit of B, and B changes 2 units for each unit of A, then the loss changes 3 x 2 = 6 units for each unit of A. Every layer applies this rule locally. No layer needs to know the whole network; it only needs its own input, its own output, and the blame message from the layer after it.</p>
+
+<figure>
+<svg width="700" height="230" viewBox="0 0 700 230" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<defs><marker id="a82" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#0f7c8c"/></marker><marker id="b82" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#d9822b"/></marker></defs>
+<g text-anchor="middle">
+<rect x="20" y="85" width="90" height="50" rx="6" fill="#e9f3f6" stroke="#5b7083"/><text x="65" y="115" fill="#1c2b33">picture x</text>
+<rect x="150" y="85" width="110" height="50" rx="6" fill="#e9f3f6" stroke="#0f7c8c" stroke-width="2"/><text x="205" y="107" fill="#1c2b33">conv layers</text><text x="205" y="124" fill="#5b7083" font-size="11">W1, W2, W3</text>
+<rect x="300" y="85" width="110" height="50" rx="6" fill="#e9f3f6" stroke="#0f7c8c" stroke-width="2"/><text x="355" y="107" fill="#1c2b33">dense layers</text><text x="355" y="124" fill="#5b7083" font-size="11">W4, W5</text>
+<rect x="450" y="85" width="100" height="50" rx="6" fill="#e9f3f6" stroke="#5b7083"/><text x="500" y="107" fill="#1c2b33">softmax</text><text x="500" y="124" fill="#5b7083" font-size="11">12 chances</text>
+<rect x="590" y="85" width="90" height="50" rx="6" fill="#fdf0e2" stroke="#d9822b" stroke-width="2"/><text x="635" y="107" fill="#1c2b33">loss</text><text x="635" y="124" fill="#5b7083" font-size="11">one number</text>
+</g>
+<g stroke="#0f7c8c" stroke-width="2" marker-end="url(#a82)"><line x1="110" y1="98" x2="148" y2="98"/><line x1="260" y1="98" x2="298" y2="98"/><line x1="410" y1="98" x2="448" y2="98"/><line x1="550" y1="98" x2="588" y2="98"/></g>
+<g stroke="#d9822b" stroke-width="2" marker-end="url(#b82)"><line x1="588" y1="124" x2="552" y2="124"/><line x1="448" y1="124" x2="412" y2="124"/><line x1="298" y1="124" x2="262" y2="124"/></g>
+<text x="350" y="60" text-anchor="middle" fill="#0f7c8c">forward pass: compute outputs, each layer remembers its input</text>
+<text x="350" y="165" text-anchor="middle" fill="#d9822b">backward pass: pass blame back, each layer stores the gradients of its weights</text>
+<text x="205" y="190" text-anchor="middle" fill="#d9822b" font-size="11">dW1, dW2, dW3</text><text x="355" y="190" text-anchor="middle" fill="#d9822b" font-size="11">dW4, dW5</text>
+<text x="350" y="218" text-anchor="middle" fill="#5b7083" font-size="11">Then the update: every weight moves a small step against its gradient. One forward, one backward, one update per batch.</text>
+<text x="350" y="25" text-anchor="middle" fill="#1c2b33">One training step</text>
+</svg>
+<figcaption>Figure 8.2. One training step. The forward pass (teal) turns pictures into a loss. The backward pass (orange) carries blame from the loss back through every layer, leaving a gradient next to every weight. The first layer passes nothing further back, because the picture itself is not something to adjust.</figcaption>
+</figure>
+
+<h3>The backward rule of every layer</h3>
+<p>Each layer type has its own small rule. In the table, d means the blame message arriving from the layer after, and x means the input the layer remembered from the forward pass.</p>
+<table>
+<thead><tr><th>Layer</th><th>Forward</th><th>Backward: gradients of its weights</th><th>Backward: message to the layer before</th></tr></thead>
+<tbody>
+<tr><td>Softmax + loss</td><td>chances p from scores; loss = -ln(p of right class)</td><td>none</td><td>p minus the one-hot answer, divided by the batch size</td></tr>
+<tr><td>Dense</td><td>out = x times W, plus b</td><td>dW = x transposed times d; db = sum of d over the batch</td><td>d times W transposed</td></tr>
+<tr><td>ReLU</td><td>keep positives, zero the rest</td><td>none</td><td>d where the input was positive, 0 elsewhere</td></tr>
+<tr><td>Flatten</td><td>unroll to a row</td><td>none</td><td>d rolled back into the remembered shape</td></tr>
+<tr><td>MaxPool</td><td>biggest of each 2 x 2 block</td><td>none</td><td>d goes to the position that won; the other three get 0</td></tr>
+<tr><td>Conv</td><td>slide filters, sum of products</td><td>dW = for each filter cell, the sum over all positions of (d at that output) x (the input pixel that cell multiplied); db = sum of d over each map</td><td>each input pixel collects, from every output it fed, d times the weight that was used</td></tr>
+</tbody>
+</table>
+<p>Four of these deserve a few more words.</p>
+<p><b>Softmax with the loss.</b> A "one-hot answer" is a row of 12 numbers with a 1 at the right class and 0 elsewhere. The blame on the scores turns out to be simply "the chances minus the one-hot answer". In the softmax example of chapter 7 the chances were Tomato 0.659, Apple 0.242, Pomegranate 0.099. If the right answer is Tomato, the blame is (0.659 - 1, 0.242, 0.099) = (-0.341, 0.242, 0.099). In words: push the Tomato score up, push the other two down, each in proportion to how wrong it was. This neat result is the reason softmax and cross-entropy are always used together.</p>
+<p><b>Dense.</b> A weight connects one input to one output. Its blame is the input's value times the output's blame. That makes sense: if the input was 0, the weight had no effect and gets no blame. The matrix formula "x transposed times d" computes this product for all 73,728 pairs at once.</p>
+<p><b>MaxPool.</b> Only the winner of each block reached the output, so only the winner can be blamed. The three losers had no effect on the result, and their gradient is 0. The layer remembers who won during the forward pass.</p>
+<p><b>Conv.</b> It is the dense rule again, repeated at every position. A filter weight was used at every position of the output map, so its blame is the sum over all those positions of "input pixel times output blame". An input pixel was used by up to nine different output positions, so its blame is collected from all of them.</p>
+
+<div class="box tip"><div class="label">Interview tip</div><p>The two rows interviewers ask for most are MaxPool and Conv. MaxPool: "The gradient is routed only to the position that was the maximum in the forward pass; the others get zero. I store a mask of the winners." Conv: "The weight gradient is the correlation of the layer's input with the incoming gradient. The input gradient scatters the incoming gradient back through the same weights, which is a full convolution with the flipped filter." I practise both until I can say them without looking.</p></div>
+
+<h2>Batch, epoch, shuffle</h2>
+<p>I do not compute the gradient from all 1,290 training crops before each step, and not from one crop either. I use a batch of 32 crops. The gradient of a batch is the average over its pictures: a decent estimate of the true slope, at a fraction of the cost. 1,290 crops make 41 batches (40 full ones and a last one of 10), so one epoch is 41 weight updates, and 40 epochs are 1,640 updates.</p>
+<p>Before every epoch the training crops are shuffled into a new random order. Without shuffling, every epoch would present the same batches in the same order, and if the files were sorted by class, a batch would be all apples, then all beetroots. Each step would then pull the weights towards one class and the next step would pull them away again.</p>
+<div class="box why"><div class="label">Why 32 pictures per batch?</div><p>A batch of 1 gives a very noisy slope and cannot use NumPy's speed, because NumPy is fast when it handles many numbers per call. A batch of all 1,290 gives a smooth slope but only one update per epoch, so learning is slow. 32 sits in between: smooth enough, 41 updates per epoch, and a batch of 32 x 3 x 64 x 64 float32 numbers takes only 1.5 MB. Some noise even helps, because it shakes the weights out of narrow dips that would not generalise.</p></div>
+
+<h2>He initialisation: how the weights start</h2>
+<p>Before training, the weights need starting values. They cannot all be zero: then every filter in a layer would compute the same thing, receive the same gradient, and stay identical forever. They must be random, and the size of the random numbers matters.</p>
+<p>If the starting weights are too small, the signal shrinks at every layer and almost nothing reaches the output. If they are too large, the signal grows at every layer and overflows. He initialisation (named after its author, Kaiming He) picks the size that keeps the signal about the same strength through a stack of ReLU layers:</p>
+<pre><code>weights = random normal numbers x sqrt(2 / fan_in)       biases = 0</code></pre>
+<p><code>fan_in</code> is the number of inputs that feed one output number: 27 for conv1, 72 for conv2, 144 for conv3, 1,152 for dense1 and 64 for dense2. So conv1 starts with weights of typical size sqrt(2 / 27) = 0.27, and dense1 with sqrt(2 / 1,152) = 0.04. The more inputs are added together, the smaller each weight starts, so the sum stays about the same size. The 2 in the formula makes up for ReLU zeroing roughly half of the values.</p>
+
+<h2>Overfitting and the four fixes</h2>
+<p>Overfitting means the network has learned the training pictures themselves and not the general idea behind them. It is like a student who memorises last year's exam answers: perfect on those questions, poor on new ones. The sign is a gap: training accuracy keeps rising while validation accuracy stops or falls. This is why the validation set exists. It is a pile of crops the network never trains on, used only to watch for this gap.</p>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>My first attempt had no augmentation and a first dense layer of 128 units (155,164 weights in total). It reached 99.6% training accuracy but only 84.2% validation accuracy, a gap of over 15 points. That is clear overfitting. With augmentation and a 64-unit dense layer, the final run reached 98.1% and 93.5%, a gap of under 5 points.</p></div>
+<p>There are four standard fixes, and I used three of them.</p>
+<table>
+<thead><tr><th>Fix</th><th>Idea</th><th>What I did</th></tr></thead>
+<tbody>
+<tr><td>More varied data</td><td>Harder to memorise pictures that never repeat exactly</td><td>Augmentation: every training crop is randomly flipped, shifted by up to 4 pixels and brightened or darkened by up to 15%, freshly each epoch (chapter 10)</td></tr>
+<tr><td>A smaller network</td><td>Fewer weights means less room to memorise</td><td>Dense1 went from 128 to 64 units, halving the weight count</td></tr>
+<tr><td>Early stopping</td><td>Stop before memorising sets in</td><td>I train all 40 epochs but keep the weights of the best validation epoch (34)</td></tr>
+<tr><td>Regularisers (dropout, weight decay)</td><td>Extra rules that discourage relying on single weights</td><td>Not used. The first three were enough, and each addition would be more code to check</td></tr>
+</tbody>
+</table>
+<div class="box careful"><div class="label">Be careful</div><p>Because I picked the best epoch by looking at validation accuracy, the validation number is slightly flattering: it is the best of 40 tries. That is why the number on my resume is the test accuracy, 92.6%, measured once on a third pile of 283 crops that played no part in any decision. Chapter 10 explains the three piles.</p></div>
+
+<h2>The gradient check: the only real proof</h2>
+<p>I wrote the backward pass of every layer by hand. A small mistake there, such as a wrong sign or a swapped axis, does not crash anything. The network still trains, only worse, and nothing tells me why. So I needed a proof that the backward maths is right. The gradient check is that proof.</p>
+<p>The idea uses the meaning of a gradient: it says how much the loss changes when one weight changes a tiny bit. I can also measure that directly. I pick one weight, add a tiny amount eps to it, and compute the loss. I subtract eps instead, and compute the loss again. The difference of the two losses, divided by 2 x eps, is the measured slope. This is called the central difference.</p>
+<pre><code>measured slope = (loss(weight + eps) - loss(weight - eps)) / (2 x eps)          eps = 0.00001
+
+relative difference = |measured - mine| / (|measured| + |mine|)</code></pre>
+<p>If my backward pass is right, the measured slope and my gradient agree to many digits. I test 20 randomly chosen weights in each of the 10 weight arrays, 200 weights in total, on the real network with random input pictures. The check runs in float64 (decimal numbers stored in 8 bytes, about 16 significant digits), because in float32 the rounding noise of the measurement would be as large as the mistake I am looking for.</p>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>In my run the biggest relative difference over all 200 tested weights was 4.9e-07, which means the two numbers agreed to about six digits. A wrong backward pass typically gives a difference near 1, so the margin is enormous. Five of the 200 weights first showed a larger difference and were measured again with a 10 times smaller nudge, as explained below.</p></div>
+<div class="box careful"><div class="label">Be careful</div><p>ReLU and max pooling have kinks: points where the slope changes suddenly (at 0 for ReLU, and where two numbers in a block tie for max pooling). If nudging a weight by eps pushes even one unit across its kink, the measured slope is slightly off although my gradient is correct. The first convolution layer feeds over 120,000 ReLU units, so this happens for a few weights. My check measures those again with eps ten times smaller. A kink problem disappears with the smaller nudge; a real bug stays wrong at every nudge size. Before I understood this, a failing first layer cost me an evening of hunting for a bug that was not there.</p></div>
+<div class="box why"><div class="label">Why is this the only real proof?</div><p>A falling loss does not prove the gradients are right. A network with a partly wrong backward pass often still learns, just to a lower accuracy, and I would blame the data or the design. The gradient check compares my formulas with a direct measurement that uses only the forward pass, which is much simpler to get right. When they agree to six digits for every layer, the backward code is correct, and any remaining weakness is in the design or the data, not in the maths.</p></div>
+
+<div class="box tip"><div class="label">Interview tip</div><p>"How do you know your backpropagation is correct?" is the natural follow-up to "from scratch". My answer: "I ran a numerical gradient check. For 20 random weights in each layer I compared my analytic gradient with a central difference, eps 1e-5 in float64. The largest relative difference was about 5e-7. I also had to handle ReLU and max-pool kinks by re-measuring with a smaller eps." The detail about kinks shows I actually ran it.</p></div>
+</section>
+<section class="chapter" id="ch9">
+<h1><span class="num">9</span> The from-scratch code, explained</h1>
+<p class="small">Short version: the whole classifier is one file, cnn_numpy.py, about 310 lines. Every layer is a small class with a forward and a backward method. The only clever part is the convolution: it loops over the 9 cells of the filter, not over the pixels, and lets NumPy's einsum handle all pictures and positions at once. This chapter walks through the file piece by piece. The complete file is in chapter 17.</p>
+
+<h2>The shape of the file</h2>
+<p>The file <code>classifier/cnn_numpy.py</code> has four parts: image preparation (chapter 6), the layers, the loss, and the network class that chains the layers. Both the training script on the laptop and the kiosk app on the Pi import this same file.</p>
+<p>Every layer follows one pattern, and knowing the pattern makes the whole file easy to read.</p>
+<table>
+<thead><tr><th>Method</th><th>Receives</th><th>Returns</th><th>Remembers</th></tr></thead>
+<tbody>
+<tr><td><code>forward(x)</code></td><td>the layer's input</td><td>the layer's output</td><td>whatever backward will need: the input, a mask, or a shape</td></tr>
+<tr><td><code>backward(d)</code></td><td>the blame on its output</td><td>the blame on its input</td><td>the gradients of its own weights, in <code>self.dW</code> and <code>self.db</code></td></tr>
+</tbody>
+</table>
+<p>Data flows as NumPy arrays of shape <code>(N, C, H, W)</code>: N pictures in the batch, C channels, H rows, W columns. During training N is 32. At the kiosk N is 1.</p>
+
+<h2>The slow convolution, for understanding</h2>
+<p>I first wrote convolution exactly as chapter 7 describes it, with plain loops. This version stays in the file as a reference and as a test for the fast one.</p>
+<pre><code>def conv_forward_slow(x, W, b):
+    """Convolution of ONE picture x (C, H, W) with plain Python loops.
+
+    W is (F, C, k, k): F filters, each C channels deep and k x k wide.
+    This is the textbook definition. It is far too slow to train with.
+    """
+    F, C, k, _ = W.shape
+    H_out, W_out = x.shape[1] - k + 1, x.shape[2] - k + 1
+    out = np.zeros((F, H_out, W_out), x.dtype)
+    for f in range(F):                      # every filter
+        for r in range(H_out):              # every output row
+            for c in range(W_out):          # every output column
+                patch = x[:, r:r + k, c:c + k]            # the k x k window, all channels
+                out[f, r, c] = np.sum(patch * W[f]) + b[f]
+    return out</code></pre>
+<p>Three nested loops visit every filter, every output row and every output column. <code>x[:, r:r + k, c:c + k]</code> cuts the 3 x 3 window at that position out of all channels. <code>patch * W[f]</code> multiplies the window by the filter, number by number, and <code>np.sum</code> adds the 27 products. It is the worked example of Figure 7.1 turned into code.</p>
+<p>It is correct, and far too slow. For conv2 on one picture, the innermost line runs 16 x 29 x 29 = 13,456 times. Each run is cheap for the processor but expensive for Python, which spends most of its time on the bookkeeping of each loop turn and each small array, not on the arithmetic.</p>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>On my laptop the slow convolution took 85 ms for the conv2 layer of one picture. The fast version below took 0.7 ms for the same job, about 120 times faster. Training with the slow version would have taken days instead of 30 minutes.</p></div>
+
+<h2>The fast convolution: loop over 9 cells, not over pixels</h2>
+<p>The rule for fast NumPy code is: let each NumPy call handle as many numbers as possible, and keep the count of Python loop turns small. So I turned the problem around.</p>
+<p>The slow version asks, for each output position: "which 9 input pixels do I need?" The fast version asks, for each of the 9 filter cells: "which input pixels does this cell touch, over the whole picture?" The answer is simple. The top left filter cell, cell (0, 0), touches input pixel (r, c) when producing output (r, c). So over the whole picture it touches the input with its last two rows and columns removed. Cell (0, 1) touches the same block shifted one column to the right. Cell (i, j) touches the input shifted by i rows and j columns.</p>
+<p>So the output is a sum of 9 terms. Each term is "the input, shifted by (i, j), multiplied by the weights of filter cell (i, j)". The Python loop runs 9 times, whatever the size of the picture, and each turn processes every picture, channel and position in one call.</p>
+
+<figure>
+<svg width="700" height="270" viewBox="0 0 700 270" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<text x="350" y="20" text-anchor="middle" fill="#1c2b33">A 5 x 5 input, a 3 x 3 filter, a 3 x 3 output: three of the nine shifted blocks</text>
+<g fill="#ffffff" stroke="#5b7083">
+<rect x="30" y="50" width="130" height="130"/><rect x="250" y="50" width="130" height="130"/><rect x="470" y="50" width="130" height="130"/>
+</g>
+<g stroke="#c9d6db">
+<path d="M56,50 v130 M82,50 v130 M108,50 v130 M134,50 v130 M30,76 h130 M30,102 h130 M30,128 h130 M30,154 h130"/>
+<path d="M276,50 v130 M302,50 v130 M328,50 v130 M354,50 v130 M250,76 h130 M250,102 h130 M250,128 h130 M250,154 h130"/>
+<path d="M496,50 v130 M522,50 v130 M548,50 v130 M574,50 v130 M470,76 h130 M470,102 h130 M470,128 h130 M470,154 h130"/>
+</g>
+<rect x="30" y="50" width="78" height="78" fill="#0f7c8c" fill-opacity="0.25" stroke="#0f7c8c" stroke-width="3"/>
+<rect x="276" y="50" width="78" height="78" fill="#0f7c8c" fill-opacity="0.25" stroke="#0f7c8c" stroke-width="3"/>
+<rect x="522" y="102" width="78" height="78" fill="#0f7c8c" fill-opacity="0.25" stroke="#0f7c8c" stroke-width="3"/>
+<text x="95" y="200" text-anchor="middle" fill="#1c2b33">cell (0, 0)</text><text x="95" y="217" text-anchor="middle" fill="#5b7083" font-size="11">x[0:3, 0:3]</text>
+<text x="315" y="200" text-anchor="middle" fill="#1c2b33">cell (0, 1)</text><text x="315" y="217" text-anchor="middle" fill="#5b7083" font-size="11">x[0:3, 1:4]</text>
+<text x="535" y="200" text-anchor="middle" fill="#1c2b33">cell (2, 2)</text><text x="535" y="217" text-anchor="middle" fill="#5b7083" font-size="11">x[2:5, 2:5]</text>
+<text x="205" y="120" text-anchor="middle" fill="#1c2b33" font-size="18">+</text><text x="425" y="120" text-anchor="middle" fill="#1c2b33" font-size="18">+ ... +</text>
+<text x="350" y="245" text-anchor="middle" fill="#1c2b33" font-size="12">output = sum over the 9 cells of ( shifted block x that cell's weight )</text>
+<text x="350" y="262" text-anchor="middle" fill="#5b7083" font-size="11">Each teal block has the size of the output. Nine big multiplications replace thousands of tiny ones.</text>
+</svg>
+<figcaption>Figure 9.1. The idea behind the fast convolution. Each filter cell (i, j) sees the input shifted by i rows and j columns. The output is the sum of nine shifted blocks, each multiplied by one cell's weights. The loop runs over the 9 cells only.</figcaption>
+</figure>
+
+<pre><code>def forward(self, x):
+    self.x = x                                          # remember the input for backward
+    N, C, H, W = x.shape
+    k = self.k
+    Ho, Wo = H - k + 1, W - k + 1
+    out = np.zeros((N, self.W.shape[0], Ho, Wo), x.dtype)
+    # Loop over the 9 cells of the filter, NOT over the pixels.
+    # For cell (i, j): take the input shifted by (i, j) and multiply it by
+    # that cell's weights for all pictures, channels and positions at once.
+    for i in range(k):
+        for j in range(k):
+            shifted = x[:, :, i:i + Ho, j:j + Wo]       # (N, C, Ho, Wo)
+            out += np.einsum("nchw,fc-&gt;nfhw", shifted, self.W[:, :, i, j], optimize=True)
+    out += self.b[None, :, None, None]
+    return out</code></pre>
+<p><code>self.x = x</code> remembers the input for the backward pass. <code>Ho</code> and <code>Wo</code> are the output height and width from the formula "input - k + 1". <code>out</code> starts as zeros of the output shape (N, F, Ho, Wo), where F is the number of filters. Inside the double loop, <code>shifted</code> is the input block that filter cell (i, j) touches, and <code>self.W[:, :, i, j]</code> is that cell's weights: one number for every pair of filter and input channel, a small table of shape (F, C). The einsum line multiplies the two and adds the result to the output. After the loop the bias of each filter is added to its whole map.</p>
+
+<h3>Reading the einsum letters</h3>
+<p><code>np.einsum</code> is NumPy's general tool for "multiply these arrays and add up over some axes". The string tells it how. Each letter names one axis.</p>
+<pre><code>"nchw,fc->nfhw"
+
+ nchw    the shifted input:  n = picture, c = input channel, h = row, w = column
+ fc      the cell's weights: f = filter,  c = input channel
+ nfhw    the result:         n = picture, f = filter, h = row, w = column</code></pre>
+<p>Two rules explain everything. A letter that appears in both inputs (here c) means "match these axes up and multiply". A letter that is missing after the arrow (again c) means "add up over this axis". So the line says: for every picture n, filter f and position (h, w), multiply the input value of each channel c by the weight for (f, c), and add up over the channels. That is exactly what one filter cell contributes to the output. The option <code>optimize=True</code> lets NumPy hand the work to its fast matrix-multiplication routines.</p>
+<div class="box why"><div class="label">Why einsum and not more loops or a library call?</div><p>The alternatives were a loop over channels and filters (slow), or reshaping everything into one big matrix by hand (fast but hard to read and easy to get wrong). einsum states the maths directly: the letters in the string are the same letters I use when I explain the formula. When I read the line again months later, the string tells me what it does.</p></div>
+
+<h2>The convolution backward pass</h2>
+<p>The backward pass uses the same 9-cell loop and the same shifted blocks. It computes the two things chapter 8 listed: the gradient of the weights, and the blame for the input.</p>
+<pre><code>def backward(self, d):
+    x, k = self.x, self.k
+    Ho, Wo = d.shape[2], d.shape[3]
+    self.dW = np.zeros_like(self.W)
+    self.db = d.sum(axis=(0, 2, 3))                     # each bias touched every output of its map
+    dx = np.zeros_like(x) if self.need_dx else None
+    for i in range(k):
+        for j in range(k):
+            shifted = x[:, :, i:i + Ho, j:j + Wo]
+            # Blame for weight (f, c, i, j) = sum of (blame of output) x (input it multiplied).
+            self.dW[:, :, i, j] = np.einsum("nfhw,nchw-&gt;fc", d, shifted, optimize=True)
+            if self.need_dx:
+                # Blame for the input = blame of every output it fed, times the weight used.
+                dx[:, :, i:i + Ho, j:j + Wo] += np.einsum(
+                    "nfhw,fc-&gt;nchw", d, self.W[:, :, i, j], optimize=True)
+    return dx</code></pre>
+<p><b>The bias gradient.</b> Each filter's bias was added to every position of its map in every picture. So its gradient is the sum of the blame <code>d</code> over pictures, rows and columns: <code>d.sum(axis=(0, 2, 3))</code>.</p>
+<p><b>The weight gradient.</b> In the forward pass, the weight of cell (i, j) for filter f and channel c multiplied the shifted input and added to the output. So its blame is the sum, over all pictures and positions, of "output blame times the input value it multiplied". The einsum string <code>"nfhw,nchw->fc"</code> says exactly that: multiply d by the shifted input where n, h and w match, add up over n, h and w, and keep one number per (f, c).</p>
+<p><b>The input blame.</b> Each pixel of the shifted block fed the output through this cell's weights, so it collects "output blame times weight" from every filter. The string <code>"nfhw,fc->nchw"</code> multiplies d by the weights and adds up over the filters f. The result is added into <code>dx</code> at the same shifted position the block was read from. The <code>+=</code> matters: a pixel in the middle of the picture belongs to all nine shifted blocks, and its total blame is the sum of all nine contributions.</p>
+<p>The forward and backward code mirror each other. Forward reads a shifted block and adds into the output. Backward takes the output's blame and adds into the same shifted block. If I remember the forward line, I can rebuild the backward lines from it.</p>
+<div class="box why"><div class="label">Why does the first layer skip dx?</div><p>The first convolution's input is the picture. Nobody needs the blame for the picture, because pixels are not adjusted during training. Conv1 has the largest maps (62 x 62), so computing its input blame would be the most expensive einsum of the whole backward pass, done for nothing. The flag <code>need_dx=False</code> skips it and makes every training step noticeably faster.</p></div>
+
+<h2>ReLU</h2>
+<pre><code>class ReLU:
+    """Keep positive numbers, turn negative numbers into 0."""
+
+    def forward(self, x):
+        self.keep = x &gt; 0
+        return x * self.keep
+
+    def backward(self, d):
+        return d * self.keep            # blame passes only where the input was positive</code></pre>
+<p><code>x &gt; 0</code> makes an array of True and False of the same shape as x. Multiplying by it keeps the positive numbers and zeroes the rest (True counts as 1, False as 0). The same array is used backward: blame passes only where the input was positive. Where ReLU output 0, the input had no effect on the loss, so its blame is 0.</p>
+
+<h2>MaxPool with the mask</h2>
+<pre><code>class MaxPool:
+    """2 x 2 max pooling: keep the biggest of every 2 x 2 block."""
+
+    def forward(self, x):
+        N, C, H, W = x.shape
+        Ho, Wo = H // 2, W // 2                              # an odd last row/column is dropped
+        self.in_shape = x.shape
+        blocks = x[:, :, :2 * Ho, :2 * Wo].reshape(N, C, Ho, 2, Wo, 2)
+        blocks = blocks.transpose(0, 1, 2, 4, 3, 5).reshape(N, C, Ho, Wo, 4)   # 4 numbers per block
+        winner = blocks.argmax(axis=4)                       # which of the 4 was biggest
+        self.mask = np.arange(4) == winner[..., None]        # True at the winner only
+        return blocks.max(axis=4)
+
+    def backward(self, d):
+        N, C, H, W = self.in_shape
+        Ho, Wo = H // 2, W // 2
+        blocks = self.mask * d[..., None]                    # all blame to the winner, 0 to the rest
+        blocks = blocks.reshape(N, C, Ho, Wo, 2, 2).transpose(0, 1, 2, 4, 3, 5)
+        dx = np.zeros(self.in_shape, d.dtype)
+        dx[:, :, :2 * Ho, :2 * Wo] = blocks.reshape(N, C, 2 * Ho, 2 * Wo)
+        return dx</code></pre>
+<p>The forward pass uses a reshape trick instead of a loop. Take a 4 x 4 map. Reshaping it to (2, 2, 2, 2) splits the rows into 2 groups of 2 and the columns into 2 groups of 2. The transpose brings the two "group" axes next to each other and the two "inside the block" axes to the end. A last reshape joins the inside axes, so each 2 x 2 block becomes a row of 4 numbers. Then <code>max(axis=4)</code> takes the biggest of each block, for the whole batch in one call.</p>
+
+<figure>
+<svg width="700" height="210" viewBox="0 0 700 210" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<defs><marker id="a92" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1c2b33"/></marker></defs>
+<g text-anchor="middle">
+<rect x="20" y="40" width="60" height="60" fill="#e9f3f6" stroke="#0f7c8c" stroke-width="2"/><rect x="80" y="40" width="60" height="60" fill="#fdf0e2" stroke="#d9822b" stroke-width="2"/>
+<rect x="20" y="100" width="60" height="60" fill="#fdf0e2" stroke="#d9822b" stroke-width="2"/><rect x="80" y="100" width="60" height="60" fill="#e9f3f6" stroke="#0f7c8c" stroke-width="2"/>
+<g fill="#1c2b33"><text x="35" y="60">1</text><text x="65" y="60">3</text><text x="95" y="60">2</text><text x="125" y="60">0</text><text x="35" y="90">4</text><text x="65" y="90">2</text><text x="95" y="90">1</text><text x="125" y="90">1</text><text x="35" y="120">0</text><text x="65" y="120">1</text><text x="95" y="120">5</text><text x="125" y="120">2</text><text x="35" y="150">2</text><text x="65" y="150">0</text><text x="95" y="150">3</text><text x="125" y="150">4</text></g>
+<text x="80" y="180" fill="#5b7083" font-size="11">input 4 x 4</text>
+<g fill="#ffffff" stroke="#5b7083"><rect x="230" y="32" width="120" height="26"/><rect x="230" y="68" width="120" height="26"/><rect x="230" y="104" width="120" height="26"/><rect x="230" y="140" width="120" height="26"/></g>
+<g fill="#1c2b33"><text x="290" y="50">1  3  4  2</text><text x="290" y="86">2  0  1  1</text><text x="290" y="122">0  1  2  0</text><text x="290" y="158">5  2  3  4</text></g>
+<text x="290" y="186" fill="#5b7083" font-size="11">blocks: 4 numbers each</text>
+<g fill="#ffffff" stroke="#5b7083"><rect x="420" y="32" width="120" height="26"/><rect x="420" y="68" width="120" height="26"/><rect x="420" y="104" width="120" height="26"/><rect x="420" y="140" width="120" height="26"/></g>
+<g fill="#1c2b33"><text x="480" y="50">F  F  T  F</text><text x="480" y="86">T  F  F  F</text><text x="480" y="122">F  F  T  F</text><text x="480" y="158">T  F  F  F</text></g>
+<text x="480" y="186" fill="#5b7083" font-size="11">mask: True at the winner</text>
+<rect x="610" y="70" width="30" height="30" fill="#e9f3f6" stroke="#0f7c8c" stroke-width="2"/><rect x="640" y="70" width="30" height="30" fill="#fdf0e2" stroke="#d9822b" stroke-width="2"/><rect x="610" y="100" width="30" height="30" fill="#fdf0e2" stroke="#d9822b" stroke-width="2"/><rect x="640" y="100" width="30" height="30" fill="#e9f3f6" stroke="#0f7c8c" stroke-width="2"/>
+<g fill="#1c2b33"><text x="625" y="90">4</text><text x="655" y="90">2</text><text x="625" y="120">2</text><text x="655" y="120">5</text></g>
+<text x="640" y="150" fill="#5b7083" font-size="11">output 2 x 2</text>
+</g>
+<line x1="150" y1="100" x2="222" y2="100" stroke="#1c2b33" marker-end="url(#a92)"/><text x="186" y="92" text-anchor="middle" fill="#5b7083" font-size="10">reshape</text>
+<line x1="358" y1="100" x2="412" y2="100" stroke="#1c2b33" marker-end="url(#a92)"/><text x="385" y="92" text-anchor="middle" fill="#5b7083" font-size="10">argmax</text>
+<line x1="548" y1="100" x2="602" y2="100" stroke="#1c2b33" marker-end="url(#a92)"/><text x="575" y="92" text-anchor="middle" fill="#5b7083" font-size="10">max</text>
+<text x="350" y="18" text-anchor="middle" fill="#1c2b33">MaxPool without a loop: every 2 x 2 block becomes a row of 4</text>
+</svg>
+<figcaption>Figure 9.2. The reshape trick in MaxPool, on the example of Figure 7.2. Each 2 x 2 block is laid out as a row of four numbers. The mask marks the winner of each row. Forward keeps the winners; backward sends each block's blame to the True position and zero to the others.</figcaption>
+</figure>
+
+<p><code>argmax</code> gives the position (0 to 3) of the biggest number in each block. The line <code>np.arange(4) == winner[..., None]</code> turns that position into the mask: four True/False values per block, True only at the winner. I use argmax and not "equal to the maximum" on purpose. If two numbers in a block tie, which happens often after ReLU when a whole block is 0, "equal to the maximum" would mark both and send the blame twice. argmax picks exactly one winner.</p>
+<p>The backward pass multiplies the mask by the incoming blame, which puts each block's blame at its winner and zeros elsewhere. Then it undoes the reshape steps in reverse order to get back to the input layout. If the input had an odd last row or column that pooling dropped (the 29 x 29 map), those pixels keep a blame of 0, because they never reached the output.</p>
+
+<h2>Flatten and Dense</h2>
+<pre><code>class Flatten:
+    """Unroll (N, C, H, W) into (N, C*H*W). No maths, only a new shape."""
+
+    def forward(self, x):
+        self.in_shape = x.shape
+        return x.reshape(x.shape[0], -1)
+
+    def backward(self, d):
+        return d.reshape(self.in_shape)
+
+
+class Dense:
+    """Fully connected layer: every input is joined to every output."""
+
+    def __init__(self, n_in, n_out, rng=None, dtype=np.float32):
+        rng = rng or np.random.default_rng(0)
+        self.W = (rng.standard_normal((n_in, n_out)) * np.sqrt(2.0 / n_in)).astype(dtype)
+        self.b = np.zeros(n_out, dtype)
+
+    def forward(self, x):
+        self.x = x
+        return x @ self.W + self.b
+
+    def backward(self, d):
+        self.dW = self.x.T @ d          # (n_in, n_out)
+        self.db = d.sum(axis=0)
+        return d @ self.W.T             # blame for the inputs</code></pre>
+<p>Flatten only changes the shape and remembers the old one. <code>reshape(x.shape[0], -1)</code> means "keep the batch axis, and work out the second size yourself", which gives (N, 1152).</p>
+<p>In Dense, <code>x @ self.W</code> is matrix multiplication: for each picture, each of the 64 outputs is the sum of all 1,152 inputs times their weights. The backward lines are the table row from chapter 8. <code>self.x.T @ d</code> gives a gradient for every weight: input value times output blame, added up over the batch. <code>d @ self.W.T</code> passes the blame back to the inputs through the same weights.</p>
+
+<h2>Softmax and loss_and_grad</h2>
+<pre><code>def softmax(z):
+    """Turn each row of scores into chances that are positive and add up to 1."""
+    z = z - z.max(axis=1, keepdims=True)        # does not change the answer, avoids huge exp()
+    e = np.exp(z)
+    return e / e.sum(axis=1, keepdims=True)
+
+
+def loss_and_grad(scores, y):
+    """Cross-entropy loss of a batch, and its gradient with respect to the scores.
+
+    scores : (N, 12) raw outputs of the last layer
+    y      : (N,) the right class index of each picture
+    Returns (loss, d) where d has the shape of scores and feeds Net.backward.
+    """
+    N = scores.shape[0]
+    p = softmax(scores)
+    loss = -np.mean(np.log(p[np.arange(N), y] + 1e-12))
+    d = p.copy()
+    d[np.arange(N), y] -= 1.0                   # chances minus the one-hot answer
+    return float(loss), d / N</code></pre>
+<p>Softmax first subtracts each row's largest score from the whole row. This does not change the chances, because the same factor cancels in the top and bottom of the fraction. But it makes the largest exponent e<sup>0</sup> = 1, so <code>np.exp</code> can never overflow, whatever the scores are.</p>
+<p>In <code>loss_and_grad</code>, <code>p[np.arange(N), y]</code> picks, for each picture, the chance given to its right class. The loss is the average of minus the logarithm of those chances. The tiny <code>1e-12</code> protects against the logarithm of exactly 0. The gradient is the result from chapter 8: the chances, with 1 subtracted at the right class, divided by N because the loss is an average over the batch.</p>
+<div class="box why"><div class="label">Why are softmax and the loss in one function?</div><p>Separately, the gradient of the loss with respect to the chances and the gradient of softmax with respect to the scores are both awkward, and dividing by a chance near zero is numerically risky. Together they collapse into "chances minus the one-hot answer", which is simple and safe. So the network's last layer outputs raw scores, and this one function does softmax, loss and gradient in one place.</p></div>
+
+<h2>The Net class: forward, backward, step</h2>
+<pre><code>def __init__(self, seed=0, dtype=np.float32):
+    rng = np.random.default_rng(seed)
+    self.layers = [
+        Conv(3, 8, rng=rng, dtype=dtype, need_dx=False), ReLU(), MaxPool(),   # -&gt; 8 x 31 x 31
+        Conv(8, 16, rng=rng, dtype=dtype), ReLU(), MaxPool(),                 # -&gt; 16 x 14 x 14
+        Conv(16, 32, rng=rng, dtype=dtype), ReLU(), MaxPool(),                # -&gt; 32 x 6 x 6
+        Flatten(),                                                            # -&gt; 1,152
+        Dense(32 * 6 * 6, 64, rng=rng, dtype=dtype), ReLU(),                  # -&gt; 64
+        Dense(64, len(CLASSES), rng=rng, dtype=dtype),                        # -&gt; 12 scores
+    ]
+    # The layers that own weights, with the names used in weights.npz.
+    idx = [0, 3, 6, 10, 12]
+    names = ["conv1", "conv2", "conv3", "dense1", "dense2"]
+    self.named = [(n, self.layers[i]) for n, i in zip(names, idx)]
+    # One "velocity" array per weight array, for momentum.
+    self.velocity = {(n, p): np.zeros_like(getattr(layer, p))
+                     for n, layer in self.named for p in ("W", "b")}
+
+def forward(self, x):
+    for layer in self.layers:
+        x = layer.forward(x)
+    return x                                 # (N, 12) scores, softmax NOT applied yet
+
+def backward(self, d):
+    for layer in reversed(self.layers):
+        d = layer.backward(d)
+
+def step(self, lr=0.01, momentum=0.9):
+    """One SGD-with-momentum update of every weight, using the stored gradients."""
+    for name, layer in self.named:
+        for p in ("W", "b"):
+            w = getattr(layer, p)                        # the weight array itself
+            v = self.velocity[(name, p)]                 # its velocity array
+            v *= momentum                                # keep 90% of the old direction
+            v -= lr * getattr(layer, "d" + p)            # add a step downhill
+            w += v                                       # move the weights, in place</code></pre>
+<p>The constructor builds the list of 13 layers in order, with the shapes of chapter 7 in the comments. One random number generator <code>rng</code>, started from a fixed seed, fills all the starting weights. A fixed seed means the same "random" weights every run, so a training run can be repeated exactly. <code>self.named</code> lists the five layers that own weights, with their names. <code>self.velocity</code> holds one zero-filled array per weight array for momentum.</p>
+<p><code>forward</code> passes x through every layer. <code>backward</code> passes d through every layer in reverse order. They are three lines each because every layer follows the same pattern.</p>
+<p><code>step</code> is the momentum update from chapter 8, applied to all 10 weight arrays. The operators <code>*=</code>, <code>-=</code> and <code>+=</code> change the arrays in place, which means the numbers inside the existing arrays are overwritten and no new arrays are created. That keeps the layer and the network pointing at the same weights, and saves memory.</p>
+<p>One training step, as used in <code>train.py</code>, is then four lines:</p>
+<pre><code>scores = net.forward(x_batch)               # pictures -> scores
+loss, d = loss_and_grad(scores, y_batch)    # how wrong, and the first blame message
+net.backward(d)                             # blame back through every layer
+net.step(lr=0.01, momentum=0.9)             # move every weight a small step</code></pre>
+
+<h2>Saving and loading the weights</h2>
+<pre><code>def get_weights(self):
+    """A dictionary of copies of the 10 weight arrays."""
+    return {f"{n}_{p}": getattr(layer, p).copy() for n, layer in self.named for p in ("W", "b")}
+
+def set_weights(self, arrays):
+    for n, layer in self.named:
+        for p in ("W", "b"):
+            a = arrays[f"{n}_{p}"]
+            if a.shape != getattr(layer, p).shape:
+                raise ValueError(f"{n}_{p}: file has {a.shape}, network needs {getattr(layer, p).shape}")
+            setattr(layer, p, a.astype(getattr(layer, p).dtype))
+
+def save_weights(self, path):
+    np.savez(path, **self.get_weights())
+
+def load_weights(self, path):
+    with np.load(path) as data:
+        self.set_weights({k: data[k] for k in data.files})</code></pre>
+<p>A trained network is nothing but its weights. <code>get_weights</code> collects the 10 arrays into a dictionary with names such as <code>conv1_W</code> and <code>dense2_b</code>. <code>np.savez</code> writes them into one file, <code>weights.npz</code>. <code>load_weights</code> reads the file back and <code>set_weights</code> copies each array into its layer, after checking that the shape matches. If I ever change the network and try to load an old file, the check stops with a clear message instead of letting a wrong shape cause a confusing error later.</p>
+<p>The training script also uses <code>get_weights</code> on its own: after each epoch with a new best validation accuracy, it takes a copy of the weights in memory, and at the end it saves that best copy.</p>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>My weights.npz holds 10 arrays and is about 320 kB: 80,604 weights x 4 bytes each, plus a small header for each array.</p></div>
+
+<h2>Predicting</h2>
+<pre><code>def predict(net, x):
+    """Class index and confidence (0..1) for ONE prepared picture x of shape (1, 3, 64, 64)."""
+    p = softmax(net.forward(x))[0]
+    best = int(p.argmax())
+    return best, float(p[best])
+
+
+def top_k(net, x, k=3):
+    """The k most likely classes for one picture, best first: [(class_index, chance), ...]."""
+    p = softmax(net.forward(x))[0]
+    order = np.argsort(p)[::-1][:k]
+    return [(int(i), float(p[i])) for i in order]</code></pre>
+<p><code>predict</code> is what the kiosk calls. It runs the forward pass, applies softmax, and returns the index of the highest chance together with that chance. <code>top_k</code> returns the best three, which the app shows when the customer taps "Wrong item" or when the confidence is below 0.60. <code>np.argsort</code> gives the positions that would sort the chances from small to large; <code>[::-1]</code> reverses that to large first.</p>
+
+<h2>Why float32</h2>
+<p>NumPy's default decimal type is float64: 8 bytes, about 16 significant digits. All weights and pictures in my network are float32: 4 bytes, about 7 digits.</p>
+<ul>
+<li><b>Half the memory.</b> Arrays are half as large, so more of them fit in the processor's fast cache memory.</li>
+<li><b>Faster arithmetic.</b> The Pi's processor can multiply four float32 numbers in one instruction but only two float64 numbers. On the Pi this is a large part of the difference between a quick and a slow forward pass.</li>
+<li><b>Enough precision.</b> The input pixels have only 256 levels each. Seven digits of precision are far more than the data contains.</li>
+</ul>
+<p>The one place I use float64 is the gradient check, where I need to see differences in the seventh digit and beyond. The <code>dtype</code> argument of <code>Net</code> exists for exactly that.</p>
+<div class="box careful"><div class="label">Be careful</div><p>NumPy silently turns a result into float64 if any float64 array takes part in the calculation. One careless <code>np.zeros(shape)</code> without a dtype in the middle of the network would make everything after it float64 and half as fast, with no error message. That is why every array I create copies its type from an existing one: <code>np.zeros(..., x.dtype)</code> or <code>np.zeros_like(x)</code>. A quick check is <code>net.forward(x).dtype</code>, which must print float32.</p></div>
+
+<h2>The gradient check code</h2>
+<p>The check from chapter 8 is a short script, <code>gradient_check.py</code>. Its core is this function:</p>
+<pre><code>def relative_difference(net, x, y, weights, pos, analytic, eps):
+    """Nudge one weight up and down by eps and compare the measured slope with mine."""
+    old = weights[pos]
+    weights[pos] = old + eps
+    up = loss_of(net, x, y)
+    weights[pos] = old - eps
+    down = loss_of(net, x, y)
+    weights[pos] = old                                   # put it back
+    numeric = (up - down) / (2 * eps)                    # central difference
+    return abs(numeric - analytic) / max(1e-12, abs(numeric) + abs(analytic))</code></pre>
+<p>It changes one weight up and down by <code>eps</code>, computes the loss each time with the forward pass only, and puts the weight back. The measured slope is compared with <code>analytic</code>, the gradient my backward pass stored for that weight. The main part of the script builds the real <code>Net</code> in float64, runs one forward and backward pass on four random pictures, and calls this function for 20 random weights in each of the 10 arrays. A weight that differs by more than 1e-5 is measured once more with a 10 times smaller nudge, to rule out the kinks of ReLU and max pooling. The script prints the worst difference per array and ends with PASS or FAIL.</p>
+<pre><code>loss on random data: 6.3940
+  conv1_W   shape (8, 3, 3, 3)     worst relative difference 4.9e-07
+  conv1_b   shape (8,)             worst relative difference 6.5e-09
+  conv2_W   shape (16, 8, 3, 3)    worst relative difference 2.1e-08
+  conv2_b   shape (16,)            worst relative difference 4.2e-09
+  conv3_W   shape (32, 16, 3, 3)   worst relative difference 2.2e-08
+  conv3_b   shape (32,)            worst relative difference 2.0e-09
+  dense1_W  shape (1152, 64)       worst relative difference 3.3e-09
+  dense1_b  shape (64,)            worst relative difference 7.4e-08
+  dense2_W  shape (64, 12)         worst relative difference 2.8e-08
+  dense2_b  shape (12,)            worst relative difference 4.1e-08
+weights re-measured with a smaller nudge (kinks): 5 of 200
+biggest relative difference: 4.9e-07
+PASS</code></pre>
+<div class="box why"><div class="label">Why check the real network and not each layer alone?</div><p>Checking the whole network end to end tests every layer and also the way the layers are joined: the order of the backward calls, the reshape in Flatten, the dropped row in the odd-sized pooling. A layer can be right alone and still be wired wrongly. Because conv1's weights sit at the very start, their gradient passes through every other layer's backward code, so a pass for conv1 is a pass for the whole chain.</p></div>
+
+<div class="box tip"><div class="label">Interview tip</div><p>I practise saying the two hardest backward rules without looking. Conv: "Forward, I loop over the nine filter cells; each adds the shifted input times that cell's weights. Backward, the same loop: the weight gradient is the incoming gradient times the shifted input, summed over batch and positions; the input gradient adds the incoming gradient times the weights back into the same shifted block." Pool: "Forward keeps the maximum of each 2 x 2 block and remembers which one won. Backward sends the gradient only to the winner." If I can say these two, I can rebuild the rest.</p></div>
+
+<div class="box story"><div class="label">Design story</div><p>In version 1 the model was a black box to me: <code>torch.hub.load</code> fetched YOLOv5, and one line returned boxes and names. I could run it but not explain it. In version 2 there is no line in the classifier I did not write, and a test that proves the maths. The model is a thousand times smaller and does a simpler job, but I can answer any question about it.</p></div>
+</section>

@@ -140,7 +140,7 @@ dense 73,728 + 768 = about 2.5 million.
   predict(net, x) -> (class_index, confidence), class names list CLASSES.
 
 ### Training results (predicted, replace after your real run)
-- Gradient check: biggest relative difference 3e-7 (float64).
+- Gradient check: biggest relative difference 4.9e-07 (float64, real run, see "Added in chapters 6-9").
 - Training on the laptop CPU: about 45 s per epoch, 30 minutes for 40 epochs.
 - Best validation epoch: 34. Training accuracy 98.1%, validation 93.5%, test 92.6% (262 of 283 correct).
 - Chance level 1/12 = 8.3%.
@@ -222,3 +222,31 @@ Example: 412 g tomato = 1,442 paise = Rs 14.42.
 - Boot to "Place an item": about 35 s (predicted); app start-up itself about 4 s including the 2 s tare.
 - Under-voltage lightning symbol below about 4.63 V. Power draw 1.1 A = about 5.5 W.
 - Pi forward pass is about 4x slower than the laptop (18 ms vs 4 ms); training on the Pi would take ~2 h.
+### Added in chapters 6-9 (and by writing classifier/cnn_numpy.py + gradient_check.py early; both are tested)
+- book/src/classifier/cnn_numpy.py and gradient_check.py ALREADY EXIST and pass their tests. Chapter 9 quotes
+  them verbatim. Do not change their code without re-generating the excerpts in ch06-09.html (chapters 6, 9).
+- Extra names in cnn_numpy.py: IMAGE_SIZE = 64, CROP_MARGIN = 0.10, crop_with_margin(bgr, box, margin),
+  conv_forward_slow(x, W, b), top_k(net, x, k=3) -> [(class_index, chance), ...], Net.get_weights(),
+  Net.set_weights(dict), Net.count_weights(), Net(seed=0, dtype=np.float32), Conv(..., need_dx=False) for
+  conv1. save_weights/load_weights are Net METHODS. Array names in weights.npz: conv1_W, conv1_b, conv2_W,
+  conv2_b, conv3_W, conv3_b, dense1_W, dense1_b, dense2_W, dense2_b. Dense W shape (n_in, n_out).
+  MaxPool uses argmax (one winner per block), not "== max". The net has 13 layers in Net.layers.
+- Where the crop box comes from: training = the hand-drawn YOLO box; kiosk = find_item_box(bgr) in
+  kiosk/camera.py (colour mask: HSV, tray = hue 90..130, S > 80, V > 50; item = not tray; clean specks with a
+  5 x 5 opening; box of the biggest blob; returns (x, y, w, h) or None; about 2 ms). Both then use
+  crop_with_margin (box grown 10% per side) and prepare_image. Pad colour = per-channel median of the crop's
+  outer ring of pixels. Predicted: mask boxes vs hand boxes on 100 photos, mean IoU 0.86, item found in 100/100.
+- Gradient check is REAL (seed 0): biggest relative difference 4.9e-07, 5 of 200 weights re-measured with
+  eps/10 because of ReLU/max-pool kinks (first-layer weights); loss on the random data 6.3940. Use 4.9e-07
+  (not 3e-7) everywhere.
+- Conv layers do 97% of the multiplications (2,462,688 of 2,537,184), not 98%. Dense1 has 92% of the weights;
+  the three conv layers have 6,032 weights (7.5%).
+- Each number of the final 6 x 6 maps sees about 22 x 22 input pixels.
+- Training curve (predicted): epoch 1 train 21.4% / val 26.0%; epoch 10 74.8 / 79.1; epoch 20 92.1 / 89.8;
+  epoch 34 98.1 / 93.5 (259 of 277); epoch 40 98.5 / 92.8. First batch loss about 4.9 (random He weights are
+  worse than guessing at first; ln 12 = 2.48 is the "pure guessing" landmark), epoch-1 average loss 2.31,
+  train loss 0.07 and validation loss 0.24 at epoch 34. 41 batches per epoch, 1,640 updates in 40 epochs.
+- First (overfitting) attempt: no augmentation, Dense1 with 128 units, 155,164 weights, train 99.6% / val 84.2%.
+- Slow conv vs fast conv for conv2 on one picture: 85 ms vs 0.7 ms (predicted, about 120x).
+- YOLOv5x of version 1: about 86 million weights, about 170 MB.
+- cnn_numpy.py is about 310 lines.
