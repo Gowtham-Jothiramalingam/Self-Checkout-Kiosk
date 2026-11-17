@@ -97,7 +97,13 @@ print(frame[100, 200])            # the pixel in row 100, column 200, e.g. [182 
 
 <h2>The prepare_image() code</h2>
 <pre><code>def prepare_image(bgr):
-    import cv2
+    """Turn one BGR crop of any size into the block the network eats.
+
+    Steps: pad to a square with the border colour -&gt; BGR to RGB -&gt;
+    resize to 64 x 64 -&gt; float32 in 0..1 -&gt; shape (1, 3, 64, 64).
+    The SAME function is used for training crops and for kiosk photos.
+    """
+    import cv2  # imported here so the maths below also works without OpenCV
     h, w = bgr.shape[:2]
     # The colour of the crop's outer frame of pixels (the tray), one value per channel.
     border = np.concatenate([bgr[0], bgr[-1], bgr[:, 0], bgr[:, -1]])
@@ -109,10 +115,10 @@ print(frame[100, 200])            # the pixel in row 100, column 200, e.g. [182 
                                 cv2.BORDER_CONSTANT, value=colour)
     rgb = cv2.cvtColor(square, cv2.COLOR_BGR2RGB)
     small = cv2.resize(rgb, (IMAGE_SIZE, IMAGE_SIZE), interpolation=cv2.INTER_AREA)
-    x = small.astype(np.float32) / 255.0          # 0..255 -> 0..1
-    x = x.transpose(2, 0, 1)                      # (64, 64, 3) -> (3, 64, 64)
-    return x[None]                                # add the batch axis -> (1, 3, 64, 64)</code></pre>
-<p>Reading it from the top: <code>bgr[0]</code> is the top row of the crop, <code>bgr[-1]</code> the bottom row, <code>bgr[:, 0]</code> the left column and <code>bgr[:, -1]</code> the right column. Joined together they are the outer frame of pixels, and their per-channel median is the tray colour. <code>copyMakeBorder</code> adds the strips: so many rows on top, so many below, so many columns left and right. <code>cvtColor</code> swaps the channel order. <code>resize</code> shrinks to 64 x 64. <code>astype</code> and the division make decimals from 0 to 1. <code>transpose(2, 0, 1)</code> moves the colour axis to the front. <code>x[None]</code> adds one more axis in front, the batch axis, so the shape ends as (1, 3, 64, 64).</p>
+    x = small.astype(np.float32) / 255.0          # 0..255 -&gt; 0..1
+    x = x.transpose(2, 0, 1)                      # (64, 64, 3) -&gt; (3, 64, 64)
+    return x[None]                                # add the batch axis -&gt; (1, 3, 64, 64)</code></pre>
+<p>Reading it from the top, after the docstring (the description in triple quotes): <code>bgr[0]</code> is the top row of the crop, <code>bgr[-1]</code> the bottom row, <code>bgr[:, 0]</code> the left column and <code>bgr[:, -1]</code> the right column. Joined together they are the outer frame of pixels, and their per-channel median is the tray colour. <code>copyMakeBorder</code> adds the strips: so many rows on top, so many below, so many columns left and right. <code>cvtColor</code> swaps the channel order. <code>resize</code> shrinks to 64 x 64. <code>astype</code> and the division make decimals from 0 to 1. <code>transpose(2, 0, 1)</code> moves the colour axis to the front. <code>x[None]</code> adds one more axis in front, the batch axis, so the shape ends as (1, 3, 64, 64).</p>
 
 <div class="box why"><div class="label">Why INTER_AREA?</div><p>Shrinking 150 pixels to 64 means each new pixel covers a little more than two old pixels in each direction. The simplest method just picks one old pixel and ignores its neighbours, which makes edges jagged and lets single noisy pixels through. INTER_AREA averages all the old pixels that fall inside the new one. The result is smooth and stable: the same tomato gives nearly the same 64 x 64 picture even if the crop moves by a pixel.</p></div>
 

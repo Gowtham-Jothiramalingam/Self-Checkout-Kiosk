@@ -1,0 +1,1800 @@
+<section class="chapter" id="ch17">
+<h1><span class="num">17</span> The complete code</h1>
+<p class="small">Short version: this chapter is every file of the kiosk, in full: four files for the classifier, eight for the kiosk, and the README. First comes a map of every function and class, then a reading guide that explains the choices that are not obvious, then the files themselves, and at the end how to run each one and what it prints. The files in this chapter were copied into the book by a script that checks they are identical to the files in the repository.</p>
+
+<h2>A map of the code</h2>
+<table>
+<thead><tr><th>File</th><th>Function or class</th><th>What it does</th></tr></thead>
+<tbody>
+<tr><td rowspan="12"><code>classifier/cnn_numpy.py</code></td><td><code>CLASSES</code></td><td>The 12 class names in their fixed order (index 0 to 11)</td></tr>
+<tr><td><code>crop_with_margin(bgr, box)</code></td><td>Cut a box out of a photo, grown by 10% on each side</td></tr>
+<tr><td><code>prepare_image(bgr)</code></td><td>Pad to square, BGR to RGB, 64 x 64, 0 to 1, shape (1, 3, 64, 64)</td></tr>
+<tr><td><code>conv_forward_slow(x, W, b)</code></td><td>Textbook convolution with loops, for understanding and testing</td></tr>
+<tr><td><code>Conv</code></td><td>Convolution layer: 9-cell loop with einsum, forward and backward</td></tr>
+<tr><td><code>ReLU</code></td><td>Keep positives; pass blame only where the input was positive</td></tr>
+<tr><td><code>MaxPool</code></td><td>2 x 2 max pooling with a winner mask for the backward pass</td></tr>
+<tr><td><code>Flatten</code>, <code>Dense</code></td><td>Unroll the maps; fully connected layer</td></tr>
+<tr><td><code>softmax(z)</code></td><td>Scores to chances that add up to 1</td></tr>
+<tr><td><code>loss_and_grad(scores, y)</code></td><td>Cross-entropy loss and the first blame message</td></tr>
+<tr><td><code>Net</code></td><td>The 13 layers; forward, backward, step (momentum), get/set/save/load weights</td></tr>
+<tr><td><code>predict</code>, <code>top_k</code></td><td>Best class and its chance; the best 3</td></tr>
+<tr><td rowspan="3"><code>classifier/prepare_dataset.py</code></td><td><code>read_boxes</code></td><td>YOLO label lines to pixel boxes with class names</td></tr>
+<tr><td><code>split_photos</code></td><td>Photos to train / validation / test, 70/15/15 per class, seed 42</td></tr>
+<tr><td><code>main</code></td><td>Drop Capsicum and Chilly, crop, prepare, save dataset_64.npz and split.csv</td></tr>
+<tr><td rowspan="6"><code>classifier/train.py</code></td><td><code>load_dataset</code>, <code>make_synthetic</code></td><td>The real crops, or 12 classes of drawn shapes for the smoke test</td></tr>
+<tr><td><code>augment</code></td><td>Flip, shift up to 4 pixels, brightness 0.85 to 1.15</td></tr>
+<tr><td><code>evaluate</code></td><td>Accuracy, loss and predictions of one pile</td></tr>
+<tr><td><code>confusion_matrix</code></td><td>Counts of (true class, predicted class)</td></tr>
+<tr><td><code>save_plots</code></td><td>training_curve.png and confusion_matrix.png</td></tr>
+<tr><td><code>main</code></td><td>The training loop, best epoch, one test, weights.npz and metrics.json</td></tr>
+<tr><td rowspan="2"><code>classifier/gradient_check.py</code></td><td><code>relative_difference</code></td><td>Nudge one weight, compare the measured slope with mine</td></tr>
+<tr><td><code>main</code></td><td>200 weights in float64, re-measure kinks, PASS or FAIL</td></tr>
+<tr><td rowspan="2"><code>kiosk/hx711.py</code></td><td><code>HX711</code></td><td>The real chip: is_ready, read_raw (24 bits, 25th pulse, two's complement), close</td></tr>
+<tr><td><code>SimulatedHX711</code></td><td>A pretend scale for laptop demos, with noise and wild readings</td></tr>
+<tr><td><code>kiosk/weight_filter.py</code></td><td><code>WeightFilter</code></td><td>Median of 5, grams, steady rule, average weight, tare, auto re-tare</td></tr>
+<tr><td><code>kiosk/calibrate.py</code></td><td><code>median_of_readings</code>, <code>main</code></td><td>Offset and counts per gram with a 500 g weight, into config.json</td></tr>
+<tr><td rowspan="3"><code>kiosk/camera.py</code></td><td><code>Camera</code></td><td>Open the webcam, warm up, take one fresh photo</td></tr>
+<tr><td><code>FakeCamera</code></td><td>Draws a blue tray with a coloured item, for demos</td></tr>
+<tr><td><code>find_item_box</code></td><td>The box around the biggest non-blue blob</td></tr>
+<tr><td rowspan="2"><code>kiosk/bill.py</code></td><td><code>load_prices</code>, <code>check_prices</code></td><td>Read prices.csv; stop if a class has no price</td></tr>
+<tr><td><code>price_paise</code>, <code>money</code>, <code>rupees</code>, <code>Bill</code></td><td>Whole-paise prices, printing, the itemised bill</td></tr>
+<tr><td rowspan="2"><code>kiosk/kiosk_app.py</code></td><td><code>KioskApp</code></td><td>Start-up, window, screens, the tick, the state machine, identify, buttons</td></tr>
+<tr><td><code>main</code></td><td>Read the flags, open the window, run the main loop</td></tr>
+</tbody>
+</table>
+
+<h2>A reading guide</h2>
+<p>To read the code from top to bottom, I recommend this order, which follows a single item through the kiosk: <code>kiosk_app.py</code> (start-up and <code>tick</code>), then <code>hx711.py</code> and <code>weight_filter.py</code> (how the weight becomes steady), then <code>camera.py</code> and <code>cnn_numpy.py</code> (how the item gets its name), then <code>bill.py</code> (how the name and weight become money). The training files come last; the kiosk never runs them.</p>
+<p>Most choices in the code are explained in the chapter about that part. Here are the ones that are easy to miss when reading the code alone.</p>
+<div class="box why"><div class="label">Why does every file find its files relative to itself?</div><p>Each file starts with <code>HERE = Path(__file__).resolve().parent</code> and builds every path from it. The kiosk is started by systemd, the tests from a terminal in any folder, and training on a laptop with a different home folder. Paths built from the file's own location work in all of these. Version 1's paths such as <code>C:/Users/.../Downloads/best.pt</code> worked on exactly one laptop.</p></div>
+<div class="box why"><div class="label">Why is the crops file stored as whole numbers?</div><p>prepare_dataset.py stores crops as uint8 (0 to 255) and train.py divides by 255 when it uses them. The prepared values are exactly whole numbers divided by 255, so nothing is lost, and the file is four times smaller than float32: about 23 MB instead of 91 MB for 1,850 crops.</p></div>
+<div class="box why"><div class="label">Why does train.py --synthetic write into its own folder?</div><p>The synthetic run proves the code learns, but its weights know shapes, not fruit. Writing them to <code>classifier/synthetic_run/</code> means they can never overwrite the real <code>weights.npz</code> or be copied to the Pi by mistake.</p></div>
+<div class="box why"><div class="label">Why does augment pad with "edge"?</div><p>Shifting a crop by up to 4 pixels leaves an empty strip on one side. Filling it with zeros would add a black border that never appears at the kiosk. <code>np.pad(..., mode="edge")</code> repeats the outermost pixels instead, which on a crop is the blue tray, so a shifted crop still looks like a real one.</p></div>
+<div class="box why"><div class="label">Why does train.py measure the 0.60 rule on the test pile?</div><p>It only counts how many test crops fall above and below 0.60 and how many of each were right, so I can report what the rule does. The threshold itself was chosen on the validation pile, never on the test pile, so this count does not leak into any decision.</p></div>
+<div class="box careful"><div class="label">Be careful</div><p><code>hx711.py</code>, <code>camera.py</code> and <code>calibrate.py</code> touch hardware. Without RPi.GPIO the HX711 class still imports and runs, but its stand-in GPIO always reads 0, so <code>read_raw</code> returns 0. That is useful for checking that the code imports and runs, and useless as a scale. For laptop demos the code uses <code>SimulatedHX711</code> and <code>FakeCamera</code> instead.</p></div>
+<h2>The README</h2>
+<h3><code>README.md</code></h3>
+<p class="small">A short guide to the repository: what the kiosk is, the folders, the wiring, and the commands for the laptop and the Pi. 94 lines.</p>
+<pre><code># Edge-AI Self-Checkout Kiosk (version 2)
+
+A self-checkout kiosk for loose fruit and vegetables. A customer puts one item on the tray;
+the kiosk weighs it with a load cell, recognises it with a small CNN written from scratch in
+NumPy, and adds a line to an itemised bill on a touchscreen. Everything runs on one
+Raspberry Pi 4. No PyTorch, no TensorFlow, no cloud.
+
+- 12 classes: Apple, Beetroot, Brinjal, Brinjal White, Coconut, Guava, Lemon, Mosambi,
+  Onion, Pomegranate, Potato, Tomato
+- CNN: 3 conv layers (8, 16, 32 filters of 3 x 3) + 2 dense layers, 80,604 weights,
+  64 x 64 RGB input, every forward and backward pass hand-written in NumPy
+- Scale: 5 kg bar load cell + HX711, read directly on GPIO 5 (DT) and GPIO 6 (SCK),
+  median-of-5 filter, "steady" when 8 readings agree within 2 g
+- App: Tkinter, fullscreen 800 x 480, money kept in whole paise
+
+## Folders
+
+```
+classifier/   cnn_numpy.py         the network, image preparation, predict (used by BOTH machines)
+              prepare_dataset.py   v1 photos + YOLO boxes -&gt; 64 x 64 crops, split by photo
+              train.py             training, best epoch, one test, weights.npz + metrics.json
+              gradient_check.py    proof that the backward pass is correct
+kiosk/        hx711.py             read the HX711 bit by bit (+ simulated scale)
+              weight_filter.py     raw counts -&gt; steady grams, auto re-tare
+              calibrate.py         offset and counts_per_gram -&gt; config.json
+              camera.py            one fresh photo, find the item on the blue tray
+              bill.py              prices.csv, paise, the itemised bill
+              kiosk_app.py         the touchscreen app
+              prices.csv           rupees per kg
+              config.json          calibration and settings
+```
+
+## Wiring (Raspberry Pi 4, physical pin numbers)
+
+| HX711 | Pi pin | | Screen | Pi pin |
+|---|---|---|---|---|
+| VCC | 1 (3.3 V) | | 5V | 2 |
+| GND | 6 | | GND | 9 |
+| DT | 29 (GPIO 5) | | DSI ribbon | DSI connector |
+| SCK | 31 (GPIO 6) | | | |
+
+Load cell: red E+, black E-, white A-, green A+. Power the HX711 from 3.3 V, never 5 V.
+
+## On the laptop (training)
+
+```
+python -m venv .venv
+source .venv/bin/activate              (Windows: .venv\Scripts\activate)
+pip install numpy opencv-python matplotlib
+cd classifier
+python cnn_numpy.py                    # fast conv equals slow conv: True; 80604 weights
+python gradient_check.py               # ... biggest relative difference ~5e-07, PASS
+python train.py --synthetic            # proves the code learns, writes synthetic_run/
+python prepare_dataset.py --images ../dataset/images --labels ../dataset/labels
+python train.py                        # 40 epochs, writes weights.npz and metrics.json
+scp weights.npz kiosk@kiosk.local:~/Self-Checkout-Kiosk/classifier/
+```
+
+## On the Raspberry Pi (Raspberry Pi OS Bookworm 64-bit)
+
+```
+sudo apt remove -y python3-rpi.gpio
+sudo apt install -y python3-numpy python3-opencv python3-tk python3-rpi-lgpio
+git clone https://github.com/Gowtham-Jothiramalingam/Self-Checkout-Kiosk.git
+cd Self-Checkout-Kiosk/kiosk
+python3 hx711.py                       # 20 raw readings
+python3 camera.py                      # saves camera_test.jpg with the item box
+python3 calibrate.py                   # needs a 500 g weight, writes config.json
+python3 kiosk_app.py                   # the kiosk (Ctrl+Q quits)
+```
+
+Autostart: copy the unit file from chapter 5 of the book to
+`~/.config/systemd/user/kiosk.service`, then
+`systemctl --user daemon-reload &amp;&amp; systemctl --user enable --now kiosk.service`.
+
+## Laptop demo of the app
+
+```
+cd kiosk
+python3 bill.py                        # doctests + a sample bill
+python3 weight_filter.py               # doctest + a made-up weighing with one wild reading
+python3 kiosk_app.py --simulate --windowed
+```
+Keys 1-9, 0, Q, W put an item on the simulated tray; the space bar takes it off.
+The fake camera draws coloured circles, so the names it shows are meaningless; the demo
+tests the app's states, weights and bill. `classifier/weights.npz` must exist (train first,
+or copy `classifier/synthetic_run/weights.npz` for a demo).
+
+## Results
+
+The fruit and vegetable numbers in the book (92.6% test accuracy, 262 of 283 crops,
+18 ms per prediction on the Pi, 431.0 counts per gram, within 2 g from 100 g to 2 kg) are
+the values predicted for my run, shown in purple boxes. Re-running `prepare_dataset.py` and
+`train.py` on the real photos produces `metrics.json` with the real values to replace them.
+</code></pre>
+<h2>The classifier files</h2>
+<h3><code>classifier/cnn_numpy.py</code></h3>
+<p class="small">The network and the image preparation. Used by training on the laptop and by the kiosk on the Pi. 313 lines.</p>
+<pre><code>"""cnn_numpy.py - the whole image classifier of the kiosk, written with NumPy only.
+
+This one file is used in two places:
+  * on the laptop, train.py imports it to TRAIN the network,
+  * on the Raspberry Pi, kiosk_app.py imports it to PREDICT one photo.
+Because both sides import the same file, the layers can never drift apart.
+
+Shapes used everywhere:
+  a batch of pictures  x : (N, C, H, W) = (how many, channels, rows, columns)
+  a batch of scores      : (N, 12)
+
+Every layer has two methods:
+  forward(x)   takes the input, remembers what it needs, returns the output
+  backward(d)  takes "how much the loss changes with my output" (d) and returns
+               "how much the loss changes with my input"; on the way it stores
+               the gradients of its own weights in self.dW and self.db
+"""
+import numpy as np
+
+# The 12 classes in their fixed order. Index 0 is Apple, index 11 is Tomato.
+# This order is baked into the trained weights, so it must never change.
+CLASSES = ["Apple", "Beetroot", "Brinjal", "Brinjal White", "Coconut", "Guava",
+           "Lemon", "Mosambi", "Onion", "Pomegranate", "Potato", "Tomato"]
+
+IMAGE_SIZE = 64      # the network sees 64 x 64 pictures
+CROP_MARGIN = 0.10   # every item box is grown by 10% on each side before cropping
+
+
+# ----------------------------------------------------------------------------
+# Image preparation (the only part that uses OpenCV)
+# ----------------------------------------------------------------------------
+def crop_with_margin(bgr, box, margin=CROP_MARGIN):
+    """Cut the box (x, y, w, h) out of a photo, grown by a margin on each side."""
+    x, y, w, h = box
+    mx, my = int(round(w * margin)), int(round(h * margin))
+    rows, cols = bgr.shape[:2]
+    x0, y0 = max(0, x - mx), max(0, y - my)
+    x1, y1 = min(cols, x + w + mx), min(rows, y + h + my)
+    return bgr[y0:y1, x0:x1]
+
+
+def prepare_image(bgr):
+    """Turn one BGR crop of any size into the block the network eats.
+
+    Steps: pad to a square with the border colour -&gt; BGR to RGB -&gt;
+    resize to 64 x 64 -&gt; float32 in 0..1 -&gt; shape (1, 3, 64, 64).
+    The SAME function is used for training crops and for kiosk photos.
+    """
+    import cv2  # imported here so the maths below also works without OpenCV
+    h, w = bgr.shape[:2]
+    # The colour of the crop's outer frame of pixels (the tray), one value per channel.
+    border = np.concatenate([bgr[0], bgr[-1], bgr[:, 0], bgr[:, -1]])
+    colour = [int(v) for v in np.median(border, axis=0)]
+    # Pad the short side equally on both ends so the item keeps its true shape.
+    side = max(h, w)
+    top, left = (side - h) // 2, (side - w) // 2
+    square = cv2.copyMakeBorder(bgr, top, side - h - top, left, side - w - left,
+                                cv2.BORDER_CONSTANT, value=colour)
+    rgb = cv2.cvtColor(square, cv2.COLOR_BGR2RGB)
+    small = cv2.resize(rgb, (IMAGE_SIZE, IMAGE_SIZE), interpolation=cv2.INTER_AREA)
+    x = small.astype(np.float32) / 255.0          # 0..255 -&gt; 0..1
+    x = x.transpose(2, 0, 1)                      # (64, 64, 3) -&gt; (3, 64, 64)
+    return x[None]                                # add the batch axis -&gt; (1, 3, 64, 64)
+
+
+# ----------------------------------------------------------------------------
+# A slow convolution, only for understanding and for testing the fast one
+# ----------------------------------------------------------------------------
+def conv_forward_slow(x, W, b):
+    """Convolution of ONE picture x (C, H, W) with plain Python loops.
+
+    W is (F, C, k, k): F filters, each C channels deep and k x k wide.
+    This is the textbook definition. It is far too slow to train with.
+    """
+    F, C, k, _ = W.shape
+    H_out, W_out = x.shape[1] - k + 1, x.shape[2] - k + 1
+    out = np.zeros((F, H_out, W_out), x.dtype)
+    for f in range(F):                      # every filter
+        for r in range(H_out):              # every output row
+            for c in range(W_out):          # every output column
+                patch = x[:, r:r + k, c:c + k]            # the k x k window, all channels
+                out[f, r, c] = np.sum(patch * W[f]) + b[f]
+    return out
+
+
+# ----------------------------------------------------------------------------
+# The layers
+# ----------------------------------------------------------------------------
+class Conv:
+    """Convolution layer, k x k filters, no padding, stride 1."""
+
+    def __init__(self, c_in, c_out, k=3, rng=None, dtype=np.float32, need_dx=True):
+        rng = rng or np.random.default_rng(0)
+        fan_in = c_in * k * k                               # inputs feeding one output number
+        # He initialisation: random numbers with spread sqrt(2 / fan_in).
+        self.W = (rng.standard_normal((c_out, c_in, k, k)) * np.sqrt(2.0 / fan_in)).astype(dtype)
+        self.b = np.zeros(c_out, dtype)
+        self.k = k
+        self.need_dx = need_dx      # the first layer has nobody to pass blame to
+
+    def forward(self, x):
+        self.x = x                                          # remember the input for backward
+        N, C, H, W = x.shape
+        k = self.k
+        Ho, Wo = H - k + 1, W - k + 1
+        out = np.zeros((N, self.W.shape[0], Ho, Wo), x.dtype)
+        # Loop over the 9 cells of the filter, NOT over the pixels.
+        # For cell (i, j): take the input shifted by (i, j) and multiply it by
+        # that cell's weights for all pictures, channels and positions at once.
+        for i in range(k):
+            for j in range(k):
+                shifted = x[:, :, i:i + Ho, j:j + Wo]       # (N, C, Ho, Wo)
+                out += np.einsum("nchw,fc-&gt;nfhw", shifted, self.W[:, :, i, j], optimize=True)
+        out += self.b[None, :, None, None]
+        return out
+
+    def backward(self, d):
+        x, k = self.x, self.k
+        Ho, Wo = d.shape[2], d.shape[3]
+        self.dW = np.zeros_like(self.W)
+        self.db = d.sum(axis=(0, 2, 3))                     # each bias touched every output of its map
+        dx = np.zeros_like(x) if self.need_dx else None
+        for i in range(k):
+            for j in range(k):
+                shifted = x[:, :, i:i + Ho, j:j + Wo]
+                # Blame for weight (f, c, i, j) = sum of (blame of output) x (input it multiplied).
+                self.dW[:, :, i, j] = np.einsum("nfhw,nchw-&gt;fc", d, shifted, optimize=True)
+                if self.need_dx:
+                    # Blame for the input = blame of every output it fed, times the weight used.
+                    dx[:, :, i:i + Ho, j:j + Wo] += np.einsum(
+                        "nfhw,fc-&gt;nchw", d, self.W[:, :, i, j], optimize=True)
+        return dx
+
+
+class ReLU:
+    """Keep positive numbers, turn negative numbers into 0."""
+
+    def forward(self, x):
+        self.keep = x &gt; 0
+        return x * self.keep
+
+    def backward(self, d):
+        return d * self.keep            # blame passes only where the input was positive
+
+
+class MaxPool:
+    """2 x 2 max pooling: keep the biggest of every 2 x 2 block."""
+
+    def forward(self, x):
+        N, C, H, W = x.shape
+        Ho, Wo = H // 2, W // 2                              # an odd last row/column is dropped
+        self.in_shape = x.shape
+        blocks = x[:, :, :2 * Ho, :2 * Wo].reshape(N, C, Ho, 2, Wo, 2)
+        blocks = blocks.transpose(0, 1, 2, 4, 3, 5).reshape(N, C, Ho, Wo, 4)   # 4 numbers per block
+        winner = blocks.argmax(axis=4)                       # which of the 4 was biggest
+        self.mask = np.arange(4) == winner[..., None]        # True at the winner only
+        return blocks.max(axis=4)
+
+    def backward(self, d):
+        N, C, H, W = self.in_shape
+        Ho, Wo = H // 2, W // 2
+        blocks = self.mask * d[..., None]                    # all blame to the winner, 0 to the rest
+        blocks = blocks.reshape(N, C, Ho, Wo, 2, 2).transpose(0, 1, 2, 4, 3, 5)
+        dx = np.zeros(self.in_shape, d.dtype)
+        dx[:, :, :2 * Ho, :2 * Wo] = blocks.reshape(N, C, 2 * Ho, 2 * Wo)
+        return dx
+
+
+class Flatten:
+    """Unroll (N, C, H, W) into (N, C*H*W). No maths, only a new shape."""
+
+    def forward(self, x):
+        self.in_shape = x.shape
+        return x.reshape(x.shape[0], -1)
+
+    def backward(self, d):
+        return d.reshape(self.in_shape)
+
+
+class Dense:
+    """Fully connected layer: every input is joined to every output."""
+
+    def __init__(self, n_in, n_out, rng=None, dtype=np.float32):
+        rng = rng or np.random.default_rng(0)
+        self.W = (rng.standard_normal((n_in, n_out)) * np.sqrt(2.0 / n_in)).astype(dtype)
+        self.b = np.zeros(n_out, dtype)
+
+    def forward(self, x):
+        self.x = x
+        return x @ self.W + self.b
+
+    def backward(self, d):
+        self.dW = self.x.T @ d          # (n_in, n_out)
+        self.db = d.sum(axis=0)
+        return d @ self.W.T             # blame for the inputs
+
+
+# ----------------------------------------------------------------------------
+# Softmax and the loss
+# ----------------------------------------------------------------------------
+def softmax(z):
+    """Turn each row of scores into chances that are positive and add up to 1."""
+    z = z - z.max(axis=1, keepdims=True)        # does not change the answer, avoids huge exp()
+    e = np.exp(z)
+    return e / e.sum(axis=1, keepdims=True)
+
+
+def loss_and_grad(scores, y):
+    """Cross-entropy loss of a batch, and its gradient with respect to the scores.
+
+    scores : (N, 12) raw outputs of the last layer
+    y      : (N,) the right class index of each picture
+    Returns (loss, d) where d has the shape of scores and feeds Net.backward.
+    """
+    N = scores.shape[0]
+    p = softmax(scores)
+    loss = -np.mean(np.log(p[np.arange(N), y] + 1e-12))
+    d = p.copy()
+    d[np.arange(N), y] -= 1.0                   # chances minus the one-hot answer
+    return float(loss), d / N
+
+
+# ----------------------------------------------------------------------------
+# The network
+# ----------------------------------------------------------------------------
+class Net:
+    """3 x 64 x 64 -&gt; conv 8 -&gt; pool -&gt; conv 16 -&gt; pool -&gt; conv 32 -&gt; pool -&gt; 64 -&gt; 12."""
+
+    def __init__(self, seed=0, dtype=np.float32):
+        rng = np.random.default_rng(seed)
+        self.layers = [
+            Conv(3, 8, rng=rng, dtype=dtype, need_dx=False), ReLU(), MaxPool(),   # -&gt; 8 x 31 x 31
+            Conv(8, 16, rng=rng, dtype=dtype), ReLU(), MaxPool(),                 # -&gt; 16 x 14 x 14
+            Conv(16, 32, rng=rng, dtype=dtype), ReLU(), MaxPool(),                # -&gt; 32 x 6 x 6
+            Flatten(),                                                            # -&gt; 1,152
+            Dense(32 * 6 * 6, 64, rng=rng, dtype=dtype), ReLU(),                  # -&gt; 64
+            Dense(64, len(CLASSES), rng=rng, dtype=dtype),                        # -&gt; 12 scores
+        ]
+        # The layers that own weights, with the names used in weights.npz.
+        idx = [0, 3, 6, 10, 12]
+        names = ["conv1", "conv2", "conv3", "dense1", "dense2"]
+        self.named = [(n, self.layers[i]) for n, i in zip(names, idx)]
+        # One "velocity" array per weight array, for momentum.
+        self.velocity = {(n, p): np.zeros_like(getattr(layer, p))
+                         for n, layer in self.named for p in ("W", "b")}
+
+    def forward(self, x):
+        for layer in self.layers:
+            x = layer.forward(x)
+        return x                                 # (N, 12) scores, softmax NOT applied yet
+
+    def backward(self, d):
+        for layer in reversed(self.layers):
+            d = layer.backward(d)
+
+    def step(self, lr=0.01, momentum=0.9):
+        """One SGD-with-momentum update of every weight, using the stored gradients."""
+        for name, layer in self.named:
+            for p in ("W", "b"):
+                w = getattr(layer, p)                        # the weight array itself
+                v = self.velocity[(name, p)]                 # its velocity array
+                v *= momentum                                # keep 90% of the old direction
+                v -= lr * getattr(layer, "d" + p)            # add a step downhill
+                w += v                                       # move the weights, in place
+
+    def count_weights(self):
+        return sum(layer.W.size + layer.b.size for _, layer in self.named)
+
+    def get_weights(self):
+        """A dictionary of copies of the 10 weight arrays."""
+        return {f"{n}_{p}": getattr(layer, p).copy() for n, layer in self.named for p in ("W", "b")}
+
+    def set_weights(self, arrays):
+        for n, layer in self.named:
+            for p in ("W", "b"):
+                a = arrays[f"{n}_{p}"]
+                if a.shape != getattr(layer, p).shape:
+                    raise ValueError(f"{n}_{p}: file has {a.shape}, network needs {getattr(layer, p).shape}")
+                setattr(layer, p, a.astype(getattr(layer, p).dtype))
+
+    def save_weights(self, path):
+        np.savez(path, **self.get_weights())
+
+    def load_weights(self, path):
+        with np.load(path) as data:
+            self.set_weights({k: data[k] for k in data.files})
+
+
+def predict(net, x):
+    """Class index and confidence (0..1) for ONE prepared picture x of shape (1, 3, 64, 64)."""
+    p = softmax(net.forward(x))[0]
+    best = int(p.argmax())
+    return best, float(p[best])
+
+
+def top_k(net, x, k=3):
+    """The k most likely classes for one picture, best first: [(class_index, chance), ...]."""
+    p = softmax(net.forward(x))[0]
+    order = np.argsort(p)[::-1][:k]
+    return [(int(i), float(p[i])) for i in order]
+
+
+if __name__ == "__main__":
+    # A tiny self-test: the fast convolution must agree with the slow textbook one.
+    rng = np.random.default_rng(1)
+    layer = Conv(3, 8, rng=rng, dtype=np.float64)
+    x = rng.standard_normal((1, 3, 16, 16))
+    fast = layer.forward(x)[0]
+    slow = conv_forward_slow(x[0], layer.W, layer.b)
+    print("fast conv equals slow conv:", np.allclose(fast, slow))
+    net = Net()
+    print("weights in the network:", net.count_weights())
+    print("output shape for 2 pictures:", net.forward(np.zeros((2, 3, 64, 64), np.float32)).shape)
+</code></pre>
+<h3><code>classifier/prepare_dataset.py</code></h3>
+<p class="small">From version 1 photos and YOLO boxes to the three piles of 64 x 64 crops. 130 lines.</p>
+<pre><code>"""prepare_dataset.py - turn the version 1 photos and YOLO boxes into 64 x 64 crops.
+
+Input (from version 1):
+  dataset/images/&lt;photo&gt;.jpg     top-view photos of the tray
+  dataset/labels/&lt;photo&gt;.txt     one line per box: class cx cy w h (fractions of the photo size)
+Output:
+  classifier/data/dataset_64.npz  x_train, y_train, x_val, y_val, x_test, y_test (uint8 crops, int labels)
+  classifier/data/split.csv       which photo went to which pile
+
+Steps:
+  1. Read every label file. Map the 14 version 1 class numbers to my 12 classes BY NAME.
+     Capsicum and Chilly are dropped (15 and 17 photos: too few to learn or to test).
+  2. Split the PHOTOS (not the crops) into train / validation / test, 70 / 15 / 15
+     within each class, with a fixed seed, so near-identical crops of one photo
+     can never be on both sides of the split.
+  3. Cut every box out with a 10% margin and prepare it with the SAME function the
+     kiosk uses (pad to square, RGB, 64 x 64). Store as whole numbers 0..255.
+
+Run:  python prepare_dataset.py --images ../dataset/images --labels ../dataset/labels
+"""
+import argparse
+import csv
+from collections import Counter
+from pathlib import Path
+
+import cv2
+import numpy as np
+
+from cnn_numpy import CLASSES, crop_with_margin, prepare_image
+
+# The class order of version 1's YOLO training (14 classes, index 0..13).
+V1_CLASSES = ["Apple", "Beetroot", "Brinjal", "Brinjal White", "Capsicum", "Chilly", "Coconut",
+              "Guava", "Lemon", "Mosambi", "Onion", "Pomegranate", "Potato", "Tomato"]
+DROPPED = {"Capsicum", "Chilly"}
+SPLIT_SEED = 42
+VAL_SHARE, TEST_SHARE = 0.15, 0.15
+HERE = Path(__file__).resolve().parent
+
+
+def read_boxes(label_path, photo_w, photo_h):
+    """YOLO lines -&gt; list of (class_name, (x, y, w, h) in pixels)."""
+    boxes = []
+    for line in label_path.read_text().split("\n"):
+        parts = line.split()
+        if len(parts) != 5:
+            continue                                         # empty or broken line
+        k, cx, cy, w, h = int(parts[0]), *map(float, parts[1:])
+        bw, bh = w * photo_w, h * photo_h
+        x, y = (cx * photo_w) - bw / 2, (cy * photo_h) - bh / 2   # centre -&gt; top left corner
+        boxes.append((V1_CLASSES[k], (int(round(x)), int(round(y)), int(round(bw)), int(round(bh)))))
+    return boxes
+
+
+def split_photos(photos_by_class, seed=SPLIT_SEED):
+    """{class: [photo, ...]} -&gt; {photo: "train" | "val" | "test"}, 70/15/15 inside every class."""
+    rng = np.random.default_rng(seed)
+    pile = {}
+    for name in CLASSES:                                      # fixed order, so the result never changes
+        photos = sorted(photos_by_class.get(name, []))
+        rng.shuffle(photos)
+        n_val, n_test = round(len(photos) * VAL_SHARE), round(len(photos) * TEST_SHARE)
+        for i, p in enumerate(photos):
+            pile[p] = "val" if i &lt; n_val else "test" if i &lt; n_val + n_test else "train"
+    return pile
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--images", default=str(HERE.parent / "dataset" / "images"))
+    ap.add_argument("--labels", default=str(HERE.parent / "dataset" / "labels"))
+    ap.add_argument("--out", default=str(HERE / "data"))
+    args = ap.parse_args()
+    images, labels, out = Path(args.images), Path(args.labels), Path(args.out)
+    out.mkdir(parents=True, exist_ok=True)
+
+    # 1. Read all boxes; give each photo the class most of its boxes belong to.
+    photo_boxes, photos_by_class, dropped = {}, {}, Counter()
+    for img_path in sorted(images.glob("*.jpg")):
+        label_path = labels / (img_path.stem + ".txt")
+        if not label_path.exists():
+            print("no label file for", img_path.name)
+            continue
+        h, w = cv2.imread(str(img_path)).shape[:2]
+        boxes = read_boxes(label_path, w, h)
+        dropped.update(name for name, _ in boxes if name in DROPPED)
+        boxes = [(n, b) for n, b in boxes if n not in DROPPED]
+        if not boxes:
+            continue                                          # a Capsicum or Chilly photo
+        photo_boxes[img_path] = boxes
+        main_class = Counter(n for n, _ in boxes).most_common(1)[0][0]
+        photos_by_class.setdefault(main_class, []).append(img_path)
+    print(f"photos kept: {len(photo_boxes)}   boxes dropped: {dict(dropped)}")
+
+    # 2. Split by photo.
+    pile = split_photos(photos_by_class)
+
+    # 3. Cut, prepare and collect the crops.
+    data = {p: ([], []) for p in ("train", "val", "test")}
+    with open(out / "split.csv", "w", newline="") as f:
+        writer = csv.writer(f)
+        writer.writerow(["photo", "pile", "crops"])
+        for img_path, boxes in photo_boxes.items():
+            bgr = cv2.imread(str(img_path))
+            for name, box in boxes:
+                crop = crop_with_margin(bgr, box)
+                if crop.size == 0:
+                    continue                                  # a box outside the photo
+                x = prepare_image(crop)[0]                    # (3, 64, 64), values 0..1
+                data[pile[img_path]][0].append(np.round(x * 255).astype(np.uint8))
+                data[pile[img_path]][1].append(CLASSES.index(name))
+            writer.writerow([img_path.name, pile[img_path], len(boxes)])
+
+    arrays = {}
+    for p, (xs, ys) in data.items():
+        arrays[f"x_{p}"] = np.stack(xs) if xs else np.zeros((0, 3, 64, 64), np.uint8)
+        arrays[f"y_{p}"] = np.array(ys, np.int64)
+    np.savez_compressed(out / "dataset_64.npz", **arrays)
+
+    # A table of crops per class and pile, to check against the book.
+    print(f"{'class':14s} {'train':&gt;6s} {'val':&gt;5s} {'test':&gt;5s} {'total':&gt;6s}")
+    for k, name in enumerate(CLASSES):
+        n = [int((arrays[f'y_{p}'] == k).sum()) for p in ("train", "val", "test")]
+        print(f"{name:14s} {n[0]:6d} {n[1]:5d} {n[2]:5d} {sum(n):6d}")
+    n = [len(arrays[f"y_{p}"]) for p in ("train", "val", "test")]
+    print(f"{'total':14s} {n[0]:6d} {n[1]:5d} {n[2]:5d} {sum(n):6d}")
+    print("wrote", out / "dataset_64.npz", "and", out / "split.csv")
+
+
+if __name__ == "__main__":
+    main()
+</code></pre>
+<h3><code>classifier/train.py</code></h3>
+<p class="small">Training with augmentation and momentum, best-epoch selection, one test, and the synthetic smoke test. 221 lines.</p>
+<pre><code>"""train.py - train the NumPy CNN, keep the best epoch, test once, save everything.
+
+Real run (laptop, after prepare_dataset.py):
+    python train.py
+Proof that the code learns, with no fruit photos at all:
+    python train.py --synthetic
+    (12 classes of coloured shapes drawn with OpenCV; results go to classifier/synthetic_run/
+     so they can never be mistaken for the real weights)
+
+Writes into the output folder:
+  weights.npz            the weights of the best validation epoch
+  metrics.json           every epoch's accuracy and loss, the test result, the confusion matrix
+  training_curve.png     and confusion_matrix.png (if matplotlib is installed)
+"""
+import argparse
+import json
+import time
+from pathlib import Path
+
+import numpy as np
+
+from cnn_numpy import CLASSES, Net, loss_and_grad, prepare_image, softmax
+
+HERE = Path(__file__).resolve().parent
+
+
+# ----------------------------------------------------------------------------- data
+def load_dataset(path):
+    d = np.load(path)
+    return [(d[f"x_{p}"], d[f"y_{p}"]) for p in ("train", "val", "test")]
+
+
+def make_synthetic(per_class=(60, 15, 15), seed=0):
+    """12 classes of coloured shapes on a blue tray, prepared exactly like real crops.
+
+    Each class is a (shape, colour) pair; size, position, colour shade and
+    brightness vary randomly, so the network has to learn shape AND colour.
+    """
+    import cv2
+    rng = np.random.default_rng(seed)
+    shapes = ["circle", "square", "triangle", "ellipse"]
+    colours = [(40, 40, 200), (60, 200, 230), (60, 170, 60)]          # BGR: red, yellow, green
+    kinds = [(s, c) for s in shapes for c in colours]                  # 4 x 3 = 12 classes
+    piles = []
+    for n in per_class:
+        xs, ys = [], []
+        for k, (shape, colour) in enumerate(kinds):
+            for _ in range(n):
+                h, w = rng.integers(90, 140), rng.integers(90, 140)
+                img = np.zeros((h, w, 3), np.uint8)
+                img[:] = (200, 120, 40)                                 # tray blue
+                c = [int(np.clip(v + rng.integers(-30, 31), 0, 255)) for v in colour]
+                cx, cy = w // 2 + rng.integers(-8, 9), h // 2 + rng.integers(-8, 9)
+                r = int(min(h, w) * rng.uniform(0.25, 0.38))
+                if shape == "circle":
+                    cv2.circle(img, (int(cx), int(cy)), r, c, -1)
+                elif shape == "square":
+                    cv2.rectangle(img, (int(cx - r), int(cy - r)), (int(cx + r), int(cy + r)), c, -1)
+                elif shape == "triangle":
+                    pts = np.array([[cx, cy - r], [cx - r, cy + r], [cx + r, cy + r]], np.int32)
+                    cv2.fillPoly(img, [pts], c)
+                else:
+                    cv2.ellipse(img, (int(cx), int(cy)), (r, r // 2), int(rng.integers(0, 180)), 0, 360, c, -1)
+                img = np.clip(img * rng.uniform(0.85, 1.15), 0, 255).astype(np.uint8)
+                xs.append(np.round(prepare_image(img)[0] * 255).astype(np.uint8))
+                ys.append(k)
+        piles.append((np.stack(xs), np.array(ys, np.int64)))
+    names = [f"{s} {['red', 'yellow', 'green'][i % 3]}" for s in shapes for i in range(3)]
+    return piles, names
+
+
+def to_float(x_uint8):
+    return x_uint8.astype(np.float32) / 255.0
+
+
+def augment(x, rng):
+    """Random flip, shift up to 4 pixels and brightness 0.85..1.15, for TRAINING batches only."""
+    x = x.copy()
+    n = len(x)
+    flip = rng.random(n) &lt; 0.5
+    x[flip] = x[flip][..., ::-1]                                       # mirror left-right
+    padded = np.pad(x, ((0, 0), (0, 0), (4, 4), (4, 4)), mode="edge")  # repeat the border pixels
+    dy, dx = rng.integers(0, 9, n), rng.integers(0, 9, n)              # shift of -4..+4
+    for i in range(n):
+        x[i] = padded[i, :, dy[i]:dy[i] + 64, dx[i]:dx[i] + 64]
+    x *= rng.uniform(0.85, 1.15, (n, 1, 1, 1)).astype(np.float32)
+    return np.clip(x, 0.0, 1.0)
+
+
+# ----------------------------------------------------------------------------- measuring
+def evaluate(net, x_uint8, y, batch=128):
+    """Accuracy, average loss and the predicted class of every picture."""
+    preds, losses = [], []
+    for i in range(0, len(y), batch):
+        scores = net.forward(to_float(x_uint8[i:i + batch]))
+        loss, _ = loss_and_grad(scores, y[i:i + batch])
+        losses.append(loss * len(scores))
+        preds.append(scores.argmax(axis=1))
+    preds = np.concatenate(preds)
+    return float((preds == y).mean()), float(sum(losses) / len(y)), preds
+
+
+def confusion_matrix(y, preds, k):
+    m = np.zeros((k, k), np.int64)
+    np.add.at(m, (y, preds), 1)                                        # rows true, columns predicted
+    return m
+
+
+def save_plots(out, history, cm, names):
+    try:
+        import matplotlib
+        matplotlib.use("Agg")                                          # draw to files, no window
+        import matplotlib.pyplot as plt
+    except ImportError:
+        print("matplotlib not installed: skipping the pictures")
+        return
+    ep = [h["epoch"] for h in history]
+    plt.figure(figsize=(7, 4))
+    plt.plot(ep, [100 * h["train_acc"] for h in history], label="training")
+    plt.plot(ep, [100 * h["val_acc"] for h in history], label="validation")
+    plt.xlabel("epoch"); plt.ylabel("accuracy (%)"); plt.legend(); plt.grid(alpha=0.3)
+    plt.tight_layout(); plt.savefig(out / "training_curve.png", dpi=120); plt.close()
+    plt.figure(figsize=(7, 6))
+    plt.imshow(cm, cmap="Blues")
+    for i in range(len(cm)):
+        for j in range(len(cm)):
+            if cm[i, j]:
+                plt.text(j, i, cm[i, j], ha="center", va="center", fontsize=8)
+    plt.xticks(range(len(names)), names, rotation=60, ha="right", fontsize=8)
+    plt.yticks(range(len(names)), names, fontsize=8)
+    plt.xlabel("predicted"); plt.ylabel("true"); plt.tight_layout()
+    plt.savefig(out / "confusion_matrix.png", dpi=120); plt.close()
+
+
+# ----------------------------------------------------------------------------- training
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--data", default=str(HERE / "data" / "dataset_64.npz"))
+    ap.add_argument("--synthetic", action="store_true", help="train on drawn shapes to prove the code learns")
+    ap.add_argument("--epochs", type=int, default=None, help="default 40 (real) or 8 (synthetic)")
+    ap.add_argument("--batch", type=int, default=32)
+    ap.add_argument("--lr", type=float, default=0.01)
+    ap.add_argument("--momentum", type=float, default=0.9)
+    ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--no-augment", action="store_true", help="the first, overfitting attempt")
+    ap.add_argument("--out", default=None)
+    args = ap.parse_args()
+
+    if args.synthetic:
+        (train, val, test), names = make_synthetic(seed=args.seed)
+        out = Path(args.out or HERE / "synthetic_run")
+        epochs = args.epochs or 8
+    else:
+        train, val, test = load_dataset(args.data)
+        names = CLASSES
+        out = Path(args.out or HERE)
+        epochs = args.epochs or 40
+    out.mkdir(parents=True, exist_ok=True)
+    (x_tr, y_tr), (x_va, y_va), (x_te, y_te) = train, val, test
+    print(f"crops: train {len(y_tr)}, validation {len(y_va)}, test {len(y_te)}; "
+          f"chance level {100 / len(names):.1f}%")
+
+    rng = np.random.default_rng(args.seed)
+    net = Net(seed=args.seed)
+    history, best = [], {"val_acc": -1.0}
+    start = time.time()
+    for epoch in range(1, epochs + 1):
+        t0 = time.time()
+        order = rng.permutation(len(y_tr))                               # shuffle every epoch
+        losses = []
+        for i in range(0, len(order), args.batch):
+            idx = order[i:i + args.batch]
+            xb = to_float(x_tr[idx])
+            if not args.no_augment:
+                xb = augment(xb, rng)
+            loss, d = loss_and_grad(net.forward(xb), y_tr[idx])          # forward + loss
+            net.backward(d)                                              # blame for every weight
+            net.step(args.lr, args.momentum)                             # one step downhill
+            losses.append(loss)
+        train_acc, _, _ = evaluate(net, x_tr, y_tr)
+        val_acc, val_loss, _ = evaluate(net, x_va, y_va)
+        history.append({"epoch": epoch, "train_loss": float(np.mean(losses)), "train_acc": train_acc,
+                        "val_loss": val_loss, "val_acc": val_acc, "seconds": round(time.time() - t0, 1)})
+        mark = ""
+        if val_acc &gt; best["val_acc"]:                                    # keep the best epoch's weights
+            best = {"val_acc": val_acc, "epoch": epoch, "train_acc": train_acc, "weights": net.get_weights()}
+            mark = "  &lt;- best so far"
+        print(f"epoch {epoch:2d}  loss {np.mean(losses):.3f}  train {100 * train_acc:5.1f}%  "
+              f"val {100 * val_acc:5.1f}%  ({time.time() - t0:.0f} s){mark}")
+
+    # Test ONCE, with the best weights.
+    net.set_weights(best["weights"])
+    test_acc, test_loss, preds = evaluate(net, x_te, y_te)
+    cm = confusion_matrix(y_te, preds, len(names))
+    per_class = {names[k]: (round(100 * cm[k, k] / cm[k].sum(), 1) if cm[k].sum() else None)
+                 for k in range(len(names))}
+    chances = np.concatenate([softmax(net.forward(to_float(x_te[i:i + 128]))).max(axis=1)
+                              for i in range(0, len(y_te), 128)])
+    sure = chances &gt;= 0.60
+    net.save_weights(out / "weights.npz")
+    metrics = {
+        "synthetic": args.synthetic, "classes": list(names), "epochs": epochs, "batch": args.batch,
+        "lr": args.lr, "momentum": args.momentum, "augment": not args.no_augment,
+        "crops": {"train": int(len(y_tr)), "val": int(len(y_va)), "test": int(len(y_te))},
+        "best_epoch": best["epoch"], "best_train_acc": best["train_acc"], "best_val_acc": best["val_acc"],
+        "test_acc": test_acc, "test_correct": int(cm.trace()), "test_total": int(len(y_te)),
+        "test_loss": test_loss, "per_class_test_acc": per_class, "confusion_matrix": cm.tolist(),
+        "confidence_0.60": {"sure": int(sure.sum()), "sure_correct": int((preds == y_te)[sure].sum()),
+                            "unsure": int((~sure).sum()), "unsure_correct": int((preds == y_te)[~sure].sum())},
+        "training_minutes": round((time.time() - start) / 60, 1), "history": history,
+    }
+    (out / "metrics.json").write_text(json.dumps(metrics, indent=1))
+    save_plots(out, history, cm, names)
+    print(f"best epoch {best['epoch']}: train {100 * best['train_acc']:.1f}%, "
+          f"validation {100 * best['val_acc']:.1f}%")
+    print(f"test accuracy {100 * test_acc:.1f}% ({cm.trace()} of {len(y_te)})")
+    print("wrote", out / "weights.npz", "and", out / "metrics.json")
+
+
+if __name__ == "__main__":
+    main()
+</code></pre>
+<h3><code>classifier/gradient_check.py</code></h3>
+<p class="small">The numerical proof that every backward pass is correct. 73 lines.</p>
+<pre><code>"""gradient_check.py - proof that the hand-written backward pass is correct.
+
+Idea: the gradient of a weight says how much the loss changes when that weight
+changes a tiny bit. That can also be MEASURED: nudge the weight up by eps, then
+down by eps, and see how the loss moves (the "central difference"). If my
+backward pass is right, the two numbers agree to many digits.
+
+Run:  python gradient_check.py
+It uses float64 so that rounding does not hide a real mistake.
+"""
+import numpy as np
+from cnn_numpy import Net, loss_and_grad
+
+EPS = 1e-5            # size of the nudge
+PER_LAYER = 20        # random weights tested in every weight array
+
+
+def loss_of(net, x, y):
+    loss, _ = loss_and_grad(net.forward(x), y)
+    return loss
+
+
+def relative_difference(net, x, y, weights, pos, analytic, eps):
+    """Nudge one weight up and down by eps and compare the measured slope with mine."""
+    old = weights[pos]
+    weights[pos] = old + eps
+    up = loss_of(net, x, y)
+    weights[pos] = old - eps
+    down = loss_of(net, x, y)
+    weights[pos] = old                                   # put it back
+    numeric = (up - down) / (2 * eps)                    # central difference
+    return abs(numeric - analytic) / max(1e-12, abs(numeric) + abs(analytic))
+
+
+def main(seed=0):
+    rng = np.random.default_rng(seed)
+    net = Net(seed=seed, dtype=np.float64)
+    x = rng.random((4, 3, 64, 64))               # 4 random "pictures" in 0..1
+    y = rng.integers(0, 12, size=4)              # 4 random "right answers"
+
+    # Gradients from my backward pass.
+    loss, d = loss_and_grad(net.forward(x), y)
+    net.backward(d)
+    print(f"loss on random data: {loss:.4f}")
+
+    worst, retried = 0.0, 0
+    for name, layer in net.named:
+        for p in ("W", "b"):
+            weights = getattr(layer, p)
+            analytic = getattr(layer, "d" + p)
+            layer_worst = 0.0
+            for _ in range(PER_LAYER):
+                pos = tuple(rng.integers(0, s) for s in weights.shape)   # one random weight
+                rel = relative_difference(net, x, y, weights, pos, analytic[pos], EPS)
+                if rel &gt; 1e-5:
+                    # ReLU and max pooling have "kinks". If the nudge pushes one unit
+                    # across its kink, the measured slope is slightly off even though
+                    # my gradient is right. A 10 times smaller nudge avoids the kink.
+                    # A real bug stays wrong for every nudge size.
+                    retried += 1
+                    rel = relative_difference(net, x, y, weights, pos, analytic[pos], EPS / 10)
+                layer_worst = max(layer_worst, rel)
+            print(f"  {name + '_' + p:9s} shape {str(weights.shape):16s} worst relative difference {layer_worst:.1e}")
+            worst = max(worst, layer_worst)
+
+    print(f"weights re-measured with a smaller nudge (kinks): {retried} of {PER_LAYER * 10}")
+    print(f"biggest relative difference: {worst:.1e}")
+    print("PASS" if worst &lt; 1e-5 else "FAIL: the backward pass has a mistake")
+    return worst
+
+
+if __name__ == "__main__":
+    main()
+</code></pre>
+<h2>The kiosk files</h2>
+<h3><code>kiosk/hx711.py</code></h3>
+<p class="small">Reading the HX711 through GPIO 5 and 6, and the simulated scale. 118 lines.</p>
+<pre><code>"""hx711.py - read the HX711 load cell amplifier through two Raspberry Pi GPIO pins.
+
+Wiring (physical pin numbers on the 40-pin header):
+  HX711 VCC -&gt; pin 1 (3.3 V)     HX711 GND -&gt; pin 6
+  HX711 DT  -&gt; pin 29 (GPIO 5)   HX711 SCK -&gt; pin 31 (GPIO 6)
+
+How one reading works:
+  1. The HX711 pulls DT low when a new reading is ready (10 times a second).
+  2. The Pi gives 24 short pulses on SCK. After each pulse the HX711 puts the
+     next bit on DT, biggest bit first.
+  3. A 25th pulse tells the HX711 "next time, channel A with gain 128 again".
+  4. The 24 bits are a signed number in two's complement.
+The trap: if SCK stays high for more than 60 microseconds, the HX711 powers
+down and the reading is lost. Linux can pause this program at any moment, so
+now and then a reading comes out wrong. weight_filter.py removes those.
+
+On a laptop RPi.GPIO does not exist. A small stand-in keeps this file
+importable, and SimulatedHX711 gives believable readings for demos.
+"""
+import random
+import time
+
+try:
+    import RPi.GPIO as GPIO          # on the Pi this comes from the rpi-lgpio package
+    ON_PI = True
+except ImportError:                  # laptop: a do-nothing stand-in with the same names
+    ON_PI = False
+
+    class _FakeGPIO:
+        BCM, IN, OUT, LOW, HIGH = "BCM", "IN", "OUT", 0, 1
+
+        def setmode(self, mode): pass
+        def setwarnings(self, flag): pass
+        def setup(self, pin, direction, initial=0): pass
+        def output(self, pin, value): pass
+        def input(self, pin): return 0
+        def cleanup(self, pins=None): pass
+
+    GPIO = _FakeGPIO()
+
+DT_PIN = 5       # GPIO 5 = physical pin 29, data from the HX711
+SCK_PIN = 6      # GPIO 6 = physical pin 31, clock pulses from the Pi
+
+
+class HX711:
+    """The real chip, read bit by bit."""
+
+    def __init__(self, dt_pin=DT_PIN, sck_pin=SCK_PIN):
+        self.dt, self.sck = dt_pin, sck_pin
+        GPIO.setwarnings(False)
+        GPIO.setmode(GPIO.BCM)                         # use GPIO numbers, not pin numbers
+        GPIO.setup(self.sck, GPIO.OUT, initial=GPIO.LOW)
+        GPIO.setup(self.dt, GPIO.IN)
+
+    def is_ready(self):
+        return GPIO.input(self.dt) == 0                # DT low means "a reading is waiting"
+
+    def read_raw(self, timeout=1.0):
+        """One 24-bit reading as a signed whole number, or None after `timeout` seconds."""
+        deadline = time.monotonic() + timeout
+        while not self.is_ready():
+            if time.monotonic() &gt; deadline:
+                return None                            # wire loose, chip unpowered, or swapped pins
+            time.sleep(0.001)
+        value = 0
+        for _ in range(24):                            # 24 bits, biggest bit first
+            GPIO.output(self.sck, 1)                   # pulse up: the HX711 puts the next bit on DT
+            GPIO.output(self.sck, 0)                   # pulse down at once: keep SCK high only briefly
+            value = (value &lt;&lt; 1) | GPIO.input(self.dt)
+        GPIO.output(self.sck, 1)                       # 25th pulse: channel A, gain 128 next time
+        GPIO.output(self.sck, 0)
+        if value &amp; 0x800000:                           # top bit set: a negative number
+            value -= 1 &lt;&lt; 24                           # two's complement for 24 bits
+        return value
+
+    def close(self):
+        GPIO.cleanup([self.dt, self.sck])
+
+
+class SimulatedHX711:
+    """A pretend scale for laptop demos and tests.
+
+    It behaves like my real one: offset 123,450 counts, 431 counts per gram,
+    a little noise, and now and then a wild reading like the Linux timing trap.
+    """
+
+    def __init__(self, offset=123_450, counts_per_gram=431.0, noise_g=0.4, wild_every=1200, seed=1):
+        self.offset, self.cpg = offset, counts_per_gram
+        self.noise_g, self.wild_every = noise_g, wild_every
+        self.grams = 0.0
+        self.rng = random.Random(seed)
+
+    def is_ready(self):
+        return True                                    # a pretend reading is always waiting
+
+    def set_load(self, grams):
+        """Pretend an item of this weight is now on the tray (0 = empty)."""
+        self.grams = float(grams)
+
+    def read_raw(self, timeout=1.0):
+        time.sleep(0)                                  # the real chip makes us wait; the demo does not
+        if self.wild_every and self.rng.randrange(self.wild_every) == 0:
+            return self.rng.choice([-1, 1]) * self.rng.randrange(1_000_000, 8_000_000)
+        g = self.grams + self.rng.gauss(0, self.noise_g)
+        return int(round(self.offset + g * self.cpg))
+
+    def close(self):
+        pass
+
+
+if __name__ == "__main__":
+    # On the Pi: print 20 raw readings. On a laptop: the same with the simulated scale.
+    scale = HX711() if ON_PI else SimulatedHX711()
+    print("real HX711" if ON_PI else "no RPi.GPIO here: simulated scale")
+    for _ in range(20):
+        print(scale.read_raw())
+        time.sleep(0.1)
+    scale.close()
+</code></pre>
+<h3><code>kiosk/weight_filter.py</code></h3>
+<p class="small">From raw counts to a steady weight in grams. 105 lines.</p>
+<pre><code>"""weight_filter.py - turn noisy raw HX711 numbers into one steady weight in grams.
+
+Three steps for every new raw reading:
+  1. Clean:  take the median of the newest 5 raw readings. One wild reading
+             (the Linux timing trap) can never be the middle of 5, so it vanishes.
+  2. Convert: grams = (raw - offset) / counts_per_gram.
+  3. Steady: the weight is "steady" when the newest 8 cleaned values differ by
+             less than 2 g. The steady weight is their average.
+It also re-tares by itself: if the tray has been empty and steady for 5 s
+(50 readings), the current reading becomes the new zero. That removes slow drift.
+
+Small example (offset 0, 1 count per gram, so raw numbers are grams):
+&gt;&gt;&gt; f = WeightFilter(offset=0, counts_per_gram=1.0)
+&gt;&gt;&gt; for raw in [412, 413, 2600, 412, 411, 412, 413, 412, 412, 411, 412]:
+...     g = f.add(raw)
+&gt;&gt;&gt; round(g), f.steady, round(f.weight, 1)
+(412, True, 412.1)
+&gt;&gt;&gt; f.add(None) == g          # a timed-out reading changes nothing
+True
+"""
+from collections import deque
+from statistics import median
+
+MEDIAN_N = 5            # readings in the median window
+STEADY_N = 8            # cleaned readings that must agree
+STEADY_BAND_G = 2.0     # ... within this many grams
+ITEM_ON_G = 20.0        # above this, something is on the tray
+ITEM_OFF_G = 10.0       # below this, the tray counts as empty
+RETARE_AFTER = 50       # empty and steady for 50 readings (5 s) -&gt; new zero
+
+
+class WeightFilter:
+    def __init__(self, offset, counts_per_gram, median_n=MEDIAN_N, steady_n=STEADY_N,
+                 band_g=STEADY_BAND_G):
+        self.offset = float(offset)
+        self.cpg = float(counts_per_gram)
+        self.band = band_g
+        self.raw = deque(maxlen=median_n)       # newest raw readings
+        self.clean = deque(maxlen=steady_n)     # newest cleaned values, in grams
+        self.empty_count = 0                    # readings in a row with an empty, steady tray
+
+    def to_grams(self, raw):
+        return (raw - self.offset) / self.cpg
+
+    def add(self, raw):
+        """Feed one raw reading (or None). Returns the newest cleaned weight in grams."""
+        if raw is None:                         # read_raw timed out: keep what we have
+            return self.clean[-1] if self.clean else 0.0
+        self.raw.append(raw)
+        g = self.to_grams(median(self.raw))
+        self.clean.append(g)
+        self._auto_retare()
+        return g
+
+    @property
+    def steady(self):
+        return len(self.clean) == self.clean.maxlen and max(self.clean) - min(self.clean) &lt; self.band
+
+    @property
+    def weight(self):
+        """The average of the newest cleaned values: the number I bill."""
+        return sum(self.clean) / len(self.clean) if self.clean else 0.0
+
+    def tare(self, raw_readings):
+        """Make the average of these raw readings the new zero (start-up uses 20 readings)."""
+        good = sorted(r for r in raw_readings if r is not None)
+        if good:
+            self.offset = float(median(good))
+        self.raw.clear()
+        self.clean.clear()
+
+    def _auto_retare(self):
+        if self.steady and abs(self.weight) &lt; ITEM_OFF_G:
+            self.empty_count += 1
+            if self.empty_count &gt;= RETARE_AFTER:
+                self.offset = float(median(self.raw))   # the tray is empty: this is zero now
+                self.clean.clear()
+                self.empty_count = 0
+        else:
+            self.empty_count = 0
+
+
+if __name__ == "__main__":
+    import doctest
+    print("doctest failures:", doctest.testmod().failed)
+
+    # A made-up run at 10 readings per second, with my calibration numbers.
+    offset, cpg = 123_450, 431.0
+    f = WeightFilter(offset, cpg)
+    readings = [offset + 3] * 10                                  # 1 s empty tray
+    landing = [60, 250, 470, 395, 420]                            # the tomato lands and wobbles
+    readings += [offset + int(g * cpg) for g in landing]
+    readings += [offset + int((412 + d) * cpg) for d in (0.3, -0.4, 0.2, 0.0, -0.3, 0.4, 0.1)]
+    readings += [offset + 2600 * 431]                             # one wild reading (2,600 g)
+    readings += [offset + int((412 + d) * cpg) for d in (0.2, -0.1, 0.0, 0.3, -0.2, 0.1)]
+    put_down = None
+    for i, raw in enumerate(readings):
+        t = i / 10
+        if put_down is None and f.to_grams(raw) &gt; ITEM_ON_G:
+            put_down = t                                          # the first raw reading above 20 g
+        was_steady = f.steady
+        g = f.add(raw)
+        print(f"t={t:3.1f} s  raw={raw:&gt;10,}  cleaned={g:7.1f} g  {'steady' if f.steady else ''}")
+        if put_down is not None and f.steady and not was_steady:
+            print(f"   -&gt; steady weight {f.weight:.1f} g, {t - put_down:.1f} s after the item was put down")
+</code></pre>
+<h3><code>kiosk/calibrate.py</code></h3>
+<p class="small">Measuring the offset and counts per gram with a 500 g weight. 77 lines.</p>
+<pre><code>"""calibrate.py - measure the scale's zero and slope once, and save them in config.json.
+
+Run on the Pi with the kiosk app stopped:
+    systemctl --user stop kiosk.service
+    python3 calibrate.py
+    systemctl --user start kiosk.service
+You need one known weight (500 g). The script asks for an empty tray, then for
+the weight in the middle of the tray, and works out:
+    offset          = median raw reading with the empty tray
+    counts_per_gram = (median raw with the weight - offset) / 500
+On a laptop, `python3 calibrate.py --simulate` walks through the same steps
+with the simulated scale and no questions.
+"""
+import argparse
+import json
+from pathlib import Path
+from statistics import median
+
+import hx711
+
+HERE = Path(__file__).resolve().parent
+CONFIG = HERE / "config.json"
+READINGS = 20                    # 20 readings = 2 s at 10 readings per second
+
+
+def median_of_readings(scale, n=READINGS):
+    """The median of n good readings; timed-out readings (None) are skipped."""
+    values = [r for r in (scale.read_raw() for _ in range(n)) if r is not None]
+    if len(values) &lt; n // 2:
+        raise SystemExit("The HX711 is not answering. Check VCC (pin 1), GND (pin 6), "
+                         "DT (pin 29, GPIO 5) and SCK (pin 31, GPIO 6).")
+    return median(values)
+
+
+def ask(prompt, simulate):
+    if simulate:
+        print(prompt, "(simulated)")
+    else:
+        input(prompt)
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--grams", type=float, default=500.0, help="the known check weight")
+    ap.add_argument("--simulate", action="store_true", help="laptop walk-through with the simulated scale")
+    args = ap.parse_args()
+    scale = hx711.SimulatedHX711() if args.simulate else hx711.HX711()
+
+    ask("Empty the tray and press Enter.", args.simulate)
+    offset = median_of_readings(scale)
+    print(f"empty tray: {offset:,.0f} counts")
+
+    ask(f"Put the {args.grams:.0f} g weight in the middle of the tray and press Enter.", args.simulate)
+    if args.simulate:
+        scale.set_load(args.grams)
+    loaded = median_of_readings(scale)
+    print(f"with {args.grams:.0f} g: {loaded:,.0f} counts")
+
+    cpg = (loaded - offset) / args.grams
+    if cpg &lt;= 0:
+        raise SystemExit("The reading went DOWN when weight was added: swap the white and "
+                         "green load cell wires at A- and A+ (chapter 4), then run this again.")
+    print(f"counts_per_gram = ({loaded:,.0f} - {offset:,.0f}) / {args.grams:.0f} = {cpg:.1f}")
+
+    config = json.loads(CONFIG.read_text(encoding="utf-8"))   # keep every other setting
+    config.update({"offset": int(round(offset)), "counts_per_gram": round(cpg, 1),
+                   "calibrated_with_grams": int(args.grams)})
+    if args.simulate:
+        print("simulated run: config.json not changed")
+    else:
+        CONFIG.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+        print("saved in", CONFIG)
+    scale.close()
+
+
+if __name__ == "__main__":
+    main()
+</code></pre>
+<h3><code>kiosk/camera.py</code></h3>
+<p class="small">One fresh photo, and the item box from the blue-tray colour mask. 93 lines.</p>
+<pre><code>"""camera.py - take one fresh photo and find the item on the blue tray.
+
+The camera is a Logitech C270 USB webcam, 640 x 480, 35 cm above the tray,
+looking straight down. The tray is blue and no item is blue, so the item is
+"everything that is not tray blue".
+"""
+import numpy as np
+
+try:
+    import cv2
+except ImportError:          # lets the bill and filter tests run on a machine without OpenCV
+    cv2 = None
+
+WIDTH, HEIGHT = 640, 480
+WARM_UP_FRAMES = 5           # thrown away after opening: exposure settles
+FLUSH_FRAMES = 4             # buffered frames thrown away before each photo
+MIN_ITEM_PIXELS = 400        # a smaller blob is a speck, not an item
+
+# The tray in HSV colour space: hue 90..130 is blue (OpenCV hue runs 0..179).
+TRAY_LOW = (90, 80, 50)
+TRAY_HIGH = (130, 255, 255)
+
+
+class Camera:
+    def __init__(self, index=0):
+        self.cap = cv2.VideoCapture(index)
+        if not self.cap.isOpened():
+            raise RuntimeError(f"camera {index} not found (is it plugged in? is /dev/video{index} there?)")
+        self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, WIDTH)
+        self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, HEIGHT)
+        for _ in range(WARM_UP_FRAMES):          # the first frames are often too dark
+            self.cap.read()
+
+    def take_photo(self):
+        """One fresh BGR frame (480, 640, 3), or None if the camera failed."""
+        for _ in range(FLUSH_FRAMES):            # drop frames that waited in the queue
+            self.cap.grab()
+        ok, frame = self.cap.read()              # this one is taken now
+        return frame if ok else None
+
+    def close(self):
+        self.cap.release()
+
+
+class FakeCamera:
+    """For laptop demos: draws a blue tray with a coloured round 'item' on it."""
+
+    def __init__(self, seed=0):
+        self.rng = np.random.default_rng(seed)
+        self.colour = (40, 40, 200)             # BGR, set by the demo
+
+    def take_photo(self):
+        frame = np.zeros((HEIGHT, WIDTH, 3), np.uint8)
+        frame[:] = (200, 120, 40)                # tray blue in BGR
+        cx, cy = self.rng.integers(220, 420), self.rng.integers(160, 320)
+        cv2.circle(frame, (int(cx), int(cy)), int(self.rng.integers(45, 80)), self.colour, -1)
+        return frame
+
+    def close(self):
+        pass
+
+
+def find_item_box(bgr):
+    """The box (x, y, w, h) around the biggest non-blue blob, or None if the tray looks empty."""
+    hsv = cv2.cvtColor(bgr, cv2.COLOR_BGR2HSV)
+    tray = cv2.inRange(hsv, TRAY_LOW, TRAY_HIGH)            # 255 where the pixel is tray blue
+    item = cv2.bitwise_not(tray)                            # 255 where it is NOT tray blue
+    kernel = np.ones((5, 5), np.uint8)
+    item = cv2.morphologyEx(item, cv2.MORPH_OPEN, kernel)   # remove specks smaller than 5 x 5
+    contours, _ = cv2.findContours(item, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+    if not contours:
+        return None
+    biggest = max(contours, key=cv2.contourArea)
+    if cv2.contourArea(biggest) &lt; MIN_ITEM_PIXELS:
+        return None
+    return cv2.boundingRect(biggest)                        # (x, y, w, h)
+
+
+if __name__ == "__main__":
+    # On the Pi: take one photo, find the box, save both. On a laptop: use the fake camera.
+    try:
+        cam = Camera(0)
+    except Exception as e:
+        print("no real camera:", e, "- using the fake camera")
+        cam = FakeCamera()
+    photo = cam.take_photo()
+    box = find_item_box(photo)
+    print("photo", photo.shape, "item box", box)
+    if box:
+        x, y, w, h = box
+        cv2.rectangle(photo, (x, y), (x + w, y + h), (0, 165, 255), 2)
+    cv2.imwrite("camera_test.jpg", photo)
+    cam.close()
+</code></pre>
+<h3><code>kiosk/bill.py</code></h3>
+<p class="small">Prices, whole paise and the itemised bill. 99 lines.</p>
+<pre><code>"""bill.py - prices and the itemised bill, with money kept in whole paise.
+
+Why paise: computers store decimal rupees like 8.78 only approximately, so
+adding many of them can give 15.079999999999998 instead of 15.08. Whole
+numbers of paise are exact, so every sum is exact. Rupees appear only when
+the bill is printed.
+
+&gt;&gt;&gt; price_paise(412, 35)          # 412 g of tomato at Rs 35/kg
+1442
+&gt;&gt;&gt; rupees(1442)
+'Rs 14.42'
+&gt;&gt;&gt; price_paise(1033, 25)         # 2,582.5 paise rounds half up to 2,583
+2583
+&gt;&gt;&gt; b = Bill()
+&gt;&gt;&gt; _ = b.add("Tomato", 412, 35)
+&gt;&gt;&gt; _ = b.add("Onion", 1032.6, 25)
+&gt;&gt;&gt; b.total_paise, rupees(b.total_paise)
+(4025, 'Rs 40.25')
+"""
+import csv
+from pathlib import Path
+
+
+def load_prices(path):
+    """Read prices.csv into a dictionary {"Tomato": 35, ...} of whole rupees per kg."""
+    prices = {}
+    with open(path, newline="", encoding="utf-8") as f:
+        for row in csv.DictReader(f):
+            prices[row["item"].strip()] = int(row["rupees_per_kg"])
+    return prices
+
+
+def check_prices(prices, class_names):
+    """Stop at start-up if any class the network knows has no price."""
+    missing = [name for name in class_names if name not in prices]
+    if missing:
+        raise ValueError(f"prices.csv has no price for: {', '.join(missing)}")
+
+
+def price_paise(grams, rupees_per_kg):
+    """Price of `grams` (rounded to whole grams) at `rupees_per_kg`, in whole paise.
+
+    paise = grams x rupees_per_kg x 100 / 1000, rounded half up. All whole numbers.
+    """
+    g = int(round(grams))                     # the bill shows and charges whole grams
+    return (g * rupees_per_kg * 100 + 500) // 1000
+
+
+def money(paise):
+    """1442 -&gt; '14.42', using whole-number maths only."""
+    return f"{paise // 100}.{paise % 100:02d}"
+
+
+def rupees(paise):
+    """1442 -&gt; 'Rs 14.42'. Paise become rupees only when they are shown."""
+    return "Rs " + money(paise)
+
+
+class Bill:
+    """The customer's bill: a list of lines and a total, all in paise."""
+
+    def __init__(self):
+        self.lines = []                       # each line: (name, grams, rupees_per_kg, paise)
+
+    def add(self, name, grams, rupees_per_kg):
+        line = (name, int(round(grams)), rupees_per_kg, price_paise(grams, rupees_per_kg))
+        self.lines.append(line)
+        return line
+
+    def remove_last(self):
+        if self.lines:
+            self.lines.pop()
+
+    def clear(self):
+        self.lines = []
+
+    @property
+    def total_paise(self):
+        return sum(line[3] for line in self.lines)
+
+    def text(self):
+        """The bill as lines of text, the same layout the screen shows."""
+        rows = [f"{'Item':&lt;14}{'Grams':&gt;7}{'Rs/kg':&gt;7}{'Rs':&gt;9}"]
+        for name, g, rpk, p in self.lines:
+            rows.append(f"{name:&lt;14}{g:&gt;7}{rpk:&gt;7}{money(p):&gt;9}")
+        rows.append("-" * 37)
+        rows.append(f"{'Total':&lt;28}{money(self.total_paise):&gt;9}")
+        return "\n".join(rows)
+
+
+if __name__ == "__main__":
+    import doctest
+    print("doctest failures:", doctest.testmod().failed)
+    prices = load_prices(Path(__file__).resolve().parent / "prices.csv")
+    bill = Bill()
+    for name, grams in [("Tomato", 412), ("Onion", 1032.6), ("Apple", 618), ("Lemon", 97)]:
+        bill.add(name, grams, prices[name])
+    print(bill.text())
+    print("total:", rupees(bill.total_paise))
+</code></pre>
+<h3><code>kiosk/kiosk_app.py</code></h3>
+<p class="small">The touchscreen app: start-up, tick, states and screens. 269 lines.</p>
+<pre><code>"""kiosk_app.py - the touchscreen self-checkout app (Tkinter, 800 x 480, fullscreen).
+
+Run on the Pi:        python3 kiosk_app.py
+Run on a laptop demo: python3 kiosk_app.py --simulate --windowed
+  (a simulated scale and a fake camera; keys 1-9, 0, Q, W put an item on the
+   tray, the space bar takes it off)
+
+Start-up order: load weights -&gt; open camera -&gt; set up GPIO -&gt; read config.json
+and prices.csv -&gt; tare -&gt; show the first screen -&gt; start the tick.
+
+The tick runs 10 times a second. Each time it reads the scale once, feeds the
+filter, and moves between the five states:
+  Waiting -&gt; Settling -&gt; Identifying -&gt; Showing -&gt; Remove -&gt; Waiting
+"Wrong item" (or a top chance below 0.60) opens the Choose screen; "Finish"
+opens the Bill screen.
+"""
+import argparse
+import json
+import sys
+import traceback
+from pathlib import Path
+import tkinter as tk
+
+import numpy as np
+
+HERE = Path(__file__).resolve().parent              # .../kiosk
+CLASSIFIER_DIR = HERE.parent / "classifier"         # .../classifier
+sys.path.insert(0, str(CLASSIFIER_DIR))             # so "import cnn_numpy" finds the shared layer code
+
+from cnn_numpy import CLASSES, Net, crop_with_margin, prepare_image, top_k   # noqa: E402
+from bill import Bill, check_prices, load_prices, price_paise, rupees       # noqa: E402
+from weight_filter import WeightFilter                                       # noqa: E402
+import camera                                                                # noqa: E402
+import hx711                                                                 # noqa: E402
+
+TICK_MS = 100              # the tick runs every 100 ms = 10 times a second
+TARE_READINGS = 20         # 2 s of readings with the empty tray at start-up
+NO_READING_LIMIT = 30      # 30 ticks (3 s) without a reading -&gt; "Scale not responding"
+CHANGED_G = 5.0            # a steady weight this far from the shown item means a new item
+
+WAITING, SETTLING, IDENTIFYING, SHOWING, CHOOSING, REMOVE, BILL = (
+    "waiting", "settling", "identifying", "showing", "choosing", "remove", "bill")
+
+BG, TEXT, GREY = "#f4f7f8", "#1c2b33", "#5b7083"
+TEAL, GREEN, ORANGE = "#0f7c8c", "#2f8f4e", "#d9822b"
+BIG, MID, SMALL, BUTTON = ("DejaVu Sans", 40, "bold"), ("DejaVu Sans", 24), ("DejaVu Sans", 15), ("DejaVu Sans", 20, "bold")
+
+# Laptop demo only: key -&gt; (class name, grams, BGR colour for the fake camera).
+DEMO_ITEMS = {"1": ("Apple", 618, (40, 30, 190)), "2": ("Beetroot", 260, (70, 20, 110)),
+              "3": ("Brinjal", 340, (90, 30, 70)), "4": ("Brinjal White", 300, (210, 225, 230)),
+              "5": ("Coconut", 540, (40, 70, 110)), "6": ("Guava", 210, (90, 200, 150)),
+              "7": ("Lemon", 97, (60, 220, 230)), "8": ("Mosambi", 180, (70, 200, 170)),
+              "9": ("Onion", 1032.6, (120, 110, 170)), "0": ("Pomegranate", 380, (50, 40, 170)),
+              "q": ("Potato", 450, (110, 160, 200)), "w": ("Tomato", 412, (30, 40, 210))}
+
+
+class KioskApp:
+    def __init__(self, root, simulate=False, windowed=False):
+        self.root = root
+        self.simulate = simulate
+
+        # 1. Load the weights once. The first forward pass is slow, so do a dummy one now.
+        weights = CLASSIFIER_DIR / "weights.npz"
+        if not weights.exists():
+            sys.exit(f"{weights} not found. Train on the laptop, then copy it with scp.")
+        self.net = Net()
+        self.net.load_weights(weights)
+        top_k(self.net, np.zeros((1, 3, 64, 64), np.float32))
+
+        # 2. Open the camera (it throws away its first dark frames).
+        self.camera = camera.FakeCamera() if simulate else camera.Camera(0)
+
+        # 3. Set up the GPIO pins for the HX711 (or the simulated scale).
+        # 4. Read the calibration and settings, and the price table.
+        self.config = json.loads((HERE / "config.json").read_text(encoding="utf-8"))
+        self.prices = load_prices(HERE / "prices.csv")
+        check_prices(self.prices, CLASSES)
+        self.threshold = float(self.config["confidence_threshold"])
+        self.on_g = float(self.config["item_on_grams"])
+        self.off_g = float(self.config["item_off_grams"])
+        if simulate:
+            self.scale = hx711.SimulatedHX711(self.config["offset"], self.config["counts_per_gram"])
+        else:
+            self.scale = hx711.HX711()
+        self.filter = WeightFilter(self.config["offset"], self.config["counts_per_gram"])
+
+        # 5. Tare: the tray must be empty now.
+        self.filter.tare([self.scale.read_raw() for _ in range(TARE_READINGS)])
+
+        # 6. The window and the first screen, then 7. start the tick.
+        self.bill = Bill()
+        self.item = None             # the item being shown: {"grams": .., "guesses": [(index, chance), ..]}
+        self.state = None
+        self.no_reading = 0
+        self.build_window(windowed)
+        self.go(WAITING)
+        self.root.after(TICK_MS, self.tick)
+
+    # ------------------------------------------------------------------ window
+    def build_window(self, windowed):
+        r = self.root
+        r.title("Self-checkout kiosk")
+        r.configure(bg=BG)
+        if windowed:
+            r.geometry("800x480")
+        else:
+            r.attributes("-fullscreen", True)
+            r.config(cursor="none")                  # a touchscreen needs no mouse pointer
+        r.bind("&lt;Control-q&gt;", lambda e: self.quit())
+        if self.simulate:
+            r.bind("&lt;Key&gt;", self.demo_key)
+        top = tk.Frame(r, bg=TEAL, height=48)
+        top.pack(fill="x")
+        tk.Label(top, text="Self-checkout", font=MID, fg="white", bg=TEAL).pack(side="left", padx=14)
+        self.total_label = tk.Label(top, text="", font=MID, fg="white", bg=TEAL)
+        self.total_label.pack(side="right", padx=14)
+        self.body = tk.Frame(r, bg=BG)
+        self.body.pack(fill="both", expand=True)
+        self.status = tk.Label(r, text="", font=SMALL, fg=ORANGE, bg=BG)
+        self.status.pack(fill="x", pady=4)
+
+    def screen(self, big, small="", buttons=(), big_font=BIG):
+        """Clear the middle of the window and draw one screen: a big line, a small line, buttons."""
+        for w in self.body.winfo_children():
+            w.destroy()
+        self.big = tk.Label(self.body, text=big, font=big_font, fg=TEXT, bg=BG)
+        self.big.pack(pady=(30, 6))
+        self.small = tk.Label(self.body, text=small, font=MID, fg=GREY, bg=BG)
+        self.small.pack(pady=6)
+        row = tk.Frame(self.body, bg=BG)
+        row.pack(side="bottom", pady=18)
+        for text, command, colour in buttons:
+            tk.Button(row, text=text, command=command, font=BUTTON, fg="white", bg=colour,
+                      activebackground=colour, activeforeground="white", relief="flat",
+                      width=max(8, len(text) + 4), height=2).pack(side="left", padx=10)
+        n = len(self.bill.lines)
+        self.total_label.config(text=f"{n} item{'s' if n != 1 else ''}   {rupees(self.bill.total_paise)}")
+
+    # ------------------------------------------------------------------ states
+    def go(self, state):
+        """Change state and draw its screen."""
+        self.state = state
+        if state == WAITING:
+            buttons = [("Finish", lambda: self.go(BILL), TEAL)] if self.bill.lines else []
+            self.screen("Place an item", "One item, in the middle of the tray", buttons)
+        elif state == SETTLING:
+            self.screen("...", "Weighing, please wait")
+        elif state == SHOWING:
+            index, chance = self.item["guesses"][0]
+            name = CLASSES[index]
+            g, rpk = self.item["grams"], self.prices[name]
+            self.screen(name, f"{g:.0f} g    Rs {rpk}/kg    {rupees(price_paise(g, rpk))}",
+                        [("Add to bill", lambda: self.add(name), GREEN),
+                         ("Wrong item", lambda: self.go(CHOOSING), ORANGE)])
+        elif state == CHOOSING:
+            self.choose_screen(full_list=not self.item["guesses"])
+        elif state == REMOVE:
+            name, g, rpk, p = self.bill.lines[-1]
+            self.screen("Take the item off", f"Added: {name}, {g} g, {rupees(p)}")
+        elif state == BILL:
+            self.screen(self.bill.text(), "", [("Back", lambda: self.go(WAITING), GREY),
+                                               ("New customer", self.new_customer, GREEN)],
+                        big_font=("DejaVu Sans Mono", 18))
+
+    def choose_screen(self, full_list=False):
+        guesses = self.item["guesses"] or []
+        sure = bool(guesses) and guesses[0][1] &gt;= self.threshold
+        title = "Which item is it?" if sure else "Not sure, please choose"
+        if full_list:
+            self.screen(title, "", [("Cancel", lambda: self.go(REMOVE if self.bill.lines else WAITING), GREY)],
+                        big_font=MID)
+            grid = tk.Frame(self.body, bg=BG)
+            grid.pack()
+            for k, name in enumerate(CLASSES):
+                tk.Button(grid, text=name, font=SMALL, width=13, height=2, bg="white", fg=TEXT,
+                          command=lambda n=name: self.add(n)).grid(row=k // 4, column=k % 4, padx=4, pady=4)
+        else:
+            buttons = [(CLASSES[i], lambda n=CLASSES[i]: self.add(n), TEAL) for i, _ in guesses[:3]]
+            buttons.append(("Other items", lambda: self.choose_screen(full_list=True), GREY))
+            self.screen(title, f"{self.item['grams']:.0f} g on the tray", buttons, big_font=MID)
+
+    # ------------------------------------------------------------------ the tick
+    def tick(self):
+        """Runs every 100 ms: one scale reading, one filter update, one state step."""
+        try:
+            raw = self.scale.read_raw(timeout=0) if self.scale.is_ready() else None
+            self.no_reading = 0 if raw is not None else self.no_reading + 1
+            grams = self.filter.add(raw)
+            self.status.config(text="Scale not responding" if self.no_reading &gt; NO_READING_LIMIT else "")
+            self.step(grams)
+        except Exception:
+            traceback.print_exc()                    # keep the kiosk alive; the log shows what happened
+        finally:
+            self.root.after(TICK_MS, self.tick)
+
+    def step(self, grams):
+        s, f = self.state, self.filter
+        if s == WAITING:
+            if grams &gt; self.on_g:
+                self.go(SETTLING)
+        elif s == SETTLING:
+            self.big.config(text=f"{grams:.0f} g")   # live weight
+            if grams &lt; self.off_g:
+                self.go(WAITING)                     # it was lifted off again
+            elif f.steady:
+                self.identify()
+        elif s in (SHOWING, CHOOSING):
+            if grams &lt; self.off_g:
+                self.go(WAITING)                     # taken off without adding: nothing is billed
+            elif f.steady and abs(f.weight - self.item["grams"]) &gt; CHANGED_G:
+                self.go(SETTLING)                    # something was added or swapped: weigh again
+        elif s == REMOVE:
+            if grams &lt; self.off_g:
+                self.go(WAITING)
+        # BILL: the scale is ignored while the customer reads the bill
+
+    def identify(self):
+        """One photo, one prediction. Called once per item, when the weight is steady."""
+        self.state = IDENTIFYING
+        guesses = None
+        photo = self.camera.take_photo()
+        box = camera.find_item_box(photo) if photo is not None else None
+        if box is not None:
+            x = prepare_image(crop_with_margin(photo, box))
+            guesses = top_k(self.net, x, 3)
+        else:
+            self.status.config(text="Could not see the item, please choose")
+        self.item = {"grams": self.filter.weight, "guesses": guesses}
+        if guesses and guesses[0][1] &gt;= self.threshold:
+            self.go(SHOWING)
+        else:
+            self.go(CHOOSING)
+
+    # ------------------------------------------------------------------ buttons
+    def add(self, name):
+        self.bill.add(name, self.item["grams"], self.prices[name])
+        self.go(REMOVE)
+
+    def new_customer(self):
+        self.bill.clear()
+        self.go(WAITING)
+
+    def demo_key(self, event):
+        key = event.char.lower()
+        if key == " ":
+            self.scale.set_load(0)
+        elif key in DEMO_ITEMS:
+            name, grams, colour = DEMO_ITEMS[key]
+            self.camera.colour = colour
+            self.scale.set_load(grams)
+
+    def quit(self):
+        self.scale.close()
+        self.camera.close()
+        self.root.destroy()
+
+
+def main():
+    parser = argparse.ArgumentParser(description="Self-checkout kiosk app")
+    parser.add_argument("--simulate", action="store_true", help="simulated scale and fake camera (laptop demo)")
+    parser.add_argument("--windowed", action="store_true", help="an 800 x 480 window instead of fullscreen")
+    args = parser.parse_args()
+    root = tk.Tk()
+    KioskApp(root, simulate=args.simulate, windowed=args.windowed)
+    root.mainloop()
+
+
+if __name__ == "__main__":
+    main()
+</code></pre>
+<h3><code>kiosk/prices.csv</code></h3>
+<p class="small">Rupees per kilogram for the 12 items. 13 lines.</p>
+<pre><code>item,rupees_per_kg
+Apple,240
+Beetroot,50
+Brinjal,40
+Brinjal White,40
+Coconut,80
+Guava,80
+Lemon,90
+Mosambi,140
+Onion,25
+Pomegranate,210
+Potato,60
+Tomato,35
+</code></pre>
+<h3><code>kiosk/config.json</code></h3>
+<p class="small">Calibration and settings, written by calibrate.py. 9 lines.</p>
+<pre><code>{
+  "offset": 123450,
+  "counts_per_gram": 431.0,
+  "calibrated_with_grams": 500,
+  "camera_index": 0,
+  "confidence_threshold": 0.60,
+  "item_on_grams": 20,
+  "item_off_grams": 10
+}
+</code></pre>
+<h2>How to run it</h2>
+<h3>On the laptop: check, prepare, train</h3>
+<pre><code>cd classifier
+python cnn_numpy.py
+python gradient_check.py
+python train.py --synthetic
+python prepare_dataset.py --images ../dataset/images --labels ../dataset/labels
+python train.py</code></pre>
+<p><code>cnn_numpy.py</code> checks the fast convolution against the slow one and counts the weights. This is its real output:</p>
+<pre><code>fast conv equals slow conv: True
+weights in the network: 80604
+output shape for 2 pictures: (2, 12)</code></pre>
+<p><code>gradient_check.py</code> prints the worst relative difference for each of the 10 weight arrays (shown in chapter 9) and ends with:</p>
+<pre><code>weights re-measured with a smaller nudge (kinks): 5 of 200
+biggest relative difference: 4.9e-07
+PASS</code></pre>
+<p><code>train.py --synthetic</code> trains the real network for 8 epochs on 720 drawn shapes in 12 classes and tests it on 180 more. It takes about 30 seconds. This is my real run:</p>
+<pre><code>crops: train 720, validation 180, test 180; chance level 8.3%
+epoch  1  loss 2.535  train  18.5%  val  21.1%  (3 s)  &lt;- best so far
+epoch  2  loss 1.667  train  54.4%  val  57.2%  (3 s)  &lt;- best so far
+epoch  3  loss 1.128  train  62.1%  val  64.4%  (3 s)  &lt;- best so far
+epoch  4  loss 0.886  train  63.5%  val  63.3%  (3 s)
+epoch  5  loss 0.779  train  66.7%  val  68.3%  (3 s)  &lt;- best so far
+epoch  6  loss 0.698  train  82.1%  val  84.4%  (3 s)  &lt;- best so far
+epoch  7  loss 0.562  train  90.3%  val  90.0%  (3 s)  &lt;- best so far
+epoch  8  loss 0.512  train  85.0%  val  84.4%  (3 s)
+best epoch 7: train 90.3%, validation 90.0%
+test accuracy 87.8% (158 of 180)
+wrote classifier/synthetic_run/weights.npz and classifier/synthetic_run/metrics.json</code></pre>
+<p>87.8% against a chance level of 8.3% proves that the whole chain learns: data, augmentation, forward, loss, backward, momentum, best-epoch selection, testing and saving. The accuracy climbs from 18.5% in epoch 1 to 90.3% in epoch 7. Epoch 8 dropped back a little, and the best-epoch rule correctly kept epoch 7's weights.</p>
+<div class="box careful"><div class="label">Be careful</div><p>The synthetic shapes are a test of the code, not of fruit recognition. They prove the network learns; they say nothing about mosambis. The fruit numbers in this book come from the real run on the version 1 photos.</p></div>
+<p><code>prepare_dataset.py</code> prints how many photos it kept, how many boxes of Capsicum and Chilly it dropped, and a table of crops per class and pile. With my photos it ended like this (predicted values, as in chapter 10):</p>
+<pre><code>photos kept: 604   boxes dropped: {'Capsicum': 41, 'Chilly': 66}
+class           train   val  test  total
+...
+total            1290   277   283   1850
+wrote classifier/data/dataset_64.npz and classifier/data/split.csv</code></pre>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>The full run of <code>train.py</code> printed one line per epoch, about 45 s each, and ended with: "best epoch 34: train 98.1%, validation 93.5%" and "test accuracy 92.6% (262 of 283)". metrics.json held the confusion matrix of chapter 10 and the 0.60 rule counts of chapter 11 (266 sure with 256 right, 17 unsure with 6 right).</p></div>
+
+<h3>On the Pi: test the parts, calibrate, run</h3>
+<pre><code>cd ~/Self-Checkout-Kiosk/kiosk
+python3 hx711.py
+python3 camera.py
+python3 calibrate.py
+python3 kiosk_app.py</code></pre>
+<p><code>hx711.py</code> prints 20 raw readings. With an empty tray they should all be close to the offset (about 123,450), and pressing the tray gently should make them rise. <code>camera.py</code> saves <code>camera_test.jpg</code> with the item box drawn in orange. <code>calibrate.py</code> asks for an empty tray and then the 500 g weight. Its real output with the simulated scale (on the Pi the numbers are the real ones):</p>
+<pre><code>Empty the tray and press Enter. (simulated)
+empty tray: 123,418 counts
+Put the 500 g weight in the middle of the tray and press Enter. (simulated)
+with 500 g: 338,922 counts
+counts_per_gram = (338,922 - 123,418) / 500 = 431.0
+simulated run: config.json not changed</code></pre>
+<p><code>kiosk_app.py</code> opens the fullscreen app. Ctrl+Q closes it; in normal use systemd starts it at boot (chapter 5).</p>
+
+<h3>On any machine: test the pieces without hardware</h3>
+<pre><code>cd kiosk
+python3 weight_filter.py
+python3 bill.py
+python3 kiosk_app.py --simulate --windowed</code></pre>
+<p><code>weight_filter.py</code> prints <code>doctest failures: 0</code> and the made-up weighing of chapter 13, with the line "steady weight 412.1 g, 1.2 s after the item was put down". <code>bill.py</code> prints:</p>
+<pre><code>doctest failures: 0
+Item            Grams  Rs/kg       Rs
+Tomato            412     35    14.42
+Onion            1033     25    25.83
+Apple             618    240   148.32
+Lemon              97     90     8.73
+-------------------------------------
+Total                          197.30
+total: Rs 197.30</code></pre>
+
+<h2>What I ran for this book, and what needs the Pi</h2>
+<table>
+<thead><tr><th>Test</th><th>Where</th><th>Result</th></tr></thead>
+<tbody>
+<tr><td>Every file compiles (<code>python3 -m py_compile</code>)</td><td>laptop</td><td>all 10 Python files pass</td></tr>
+<tr><td>Fast convolution equals slow convolution</td><td>laptop</td><td>True; 80,604 weights</td></tr>
+<tr><td>Gradient check, float64, 200 weights</td><td>laptop</td><td>biggest relative difference 4.9e-07, PASS</td></tr>
+<tr><td><code>train.py --synthetic</code></td><td>laptop</td><td>87.8% test (158 of 180) after 8 epochs, chance 8.3%</td></tr>
+<tr><td><code>prepare_dataset.py</code> on made-up labelled photos</td><td>laptop</td><td>drops Capsicum and Chilly, splits by photo, writes the npz in the shape train.py reads</td></tr>
+<tr><td><code>weight_filter.py</code> doctest and demo</td><td>laptop</td><td>0 failures; steady 412.1 g after 1.2 s, wild 2,600 g reading ignored</td></tr>
+<tr><td><code>bill.py</code> doctest and sample bill</td><td>laptop</td><td>0 failures; total Rs 197.30</td></tr>
+<tr><td><code>hx711.py</code> import without RPi.GPIO; simulated scale</td><td>laptop</td><td>imports; simulated 412 g gives about 300,740 counts</td></tr>
+<tr><td><code>camera.py</code> box finder on a fake photo</td><td>laptop</td><td>box found</td></tr>
+<tr><td><code>calibrate.py --simulate</code></td><td>laptop</td><td>431.0 counts per gram</td></tr>
+<tr><td><code>kiosk_app.py --simulate</code> under a virtual display</td><td>laptop</td><td>all states reached; bill Rs 40.25 (chapter 15)</td></tr>
+<tr><td>Real HX711 timing and wild readings, real camera, real touchscreen, real training on the fruit photos</td><td>Pi and laptop with the photos</td><td>the purple "measured value" boxes; to be repeated and replaced</td></tr>
+</tbody>
+</table>
+<div class="box tip"><div class="label">Interview tip</div><p>If asked to show the code, I start with <code>Conv.forward</code> and <code>Conv.backward</code> in cnn_numpy.py, because they are the heart of "from scratch", then <code>read_raw</code> in hx711.py, then the <code>tick</code> in kiosk_app.py. Three short functions cover the three hardest parts: the CNN, the scale and the app loop.</p></div>
+</section>

@@ -323,3 +323,21 @@ Example: 412 g tomato = 1,442 paise = Rs 14.42.
   2 x M4; cable clips every 10 cm; power cable strain relief. Currents: Pi ~0.5 A, screen ~0.4 A, C270 ~0.1 A,
   LED ~0.1 A, HX711 < 2 mA; total 1.1 A at 5.1 V idle, ~1.3 A peak during photo+CNN, never below 5.0 V.
   CPU 52 C after start, 58 C after an hour (throttle at 80 C), vcgencmd measure_temp.
+### Added in chapter 17 (all code now exists in book/src and passed the smoke tests)
+- New files: classifier/prepare_dataset.py (args --images --labels --out; writes data/dataset_64.npz +
+  data/split.csv; prints "photos kept: ..." and a per-class train/val/test table), classifier/train.py (args
+  --data --synthetic --epochs (40 real / 8 synthetic) --batch 32 --lr 0.01 --momentum 0.9 --seed 0 --no-augment
+  --out; real output in classifier/, synthetic in classifier/synthetic_run/; writes weights.npz, metrics.json,
+  training_curve.png, confusion_matrix.png; metrics.json keys include best_epoch, best_train_acc, best_val_acc,
+  test_acc, test_correct, test_total, per_class_test_acc, confusion_matrix, "confidence_0.60", history),
+  kiosk/calibrate.py (--grams 500, --simulate; refuses if counts_per_gram <= 0 and says to swap white/green),
+  src/README.md.
+- REAL synthetic run (seed 0, 8 epochs, 720/180/180 drawn shapes, 12 classes = 4 shapes x 3 colours): best epoch 7,
+  train 90.3%, val 90.0%, test 87.8% (158 of 180), about 3 s per epoch, about 30 s total. Chance 8.3%.
+  classifier/synthetic_run/ is committed as evidence.
+- REAL calibrate --simulate: 123,418 and 338,922 counts -> 431.0. REAL simulated app run: state "showing",
+  411.9 g after a 412 g load.
+- Crops file is uint8 (about 23 MB for 1,850 crops instead of 91 MB float32). augment pads with mode="edge".
+- ch17.html embeds 13 files (README.md, 4 classifier, 8 kiosk) and was verified identical by script. If ANY source
+  file changes, rebuild ch17 and re-check the excerpts in ch06-16 (a script compares every quoted def/class).
+- Page count so far: ch01-05 30, ch06-09 31, ch10-13 26, ch14-16 20, ch17 35 pages (A4, Chromium).
