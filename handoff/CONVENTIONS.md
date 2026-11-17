@@ -350,3 +350,10 @@ Example: 412 g tomato = 1,442 paise = Rs 14.42.
 - ch20: v1 -> v2 table of 8 changes; limits table (9 rows); 9 improvements in order (weight as a hint is #3).
 - ch21: 67 numbered questions in 9 groups; cheat sheet forced onto its own page (inline styles, page-break-before).
 - All six chapter fragments now exist. Turn 7: copy assemble.py + style.css into book/, run, check the PDF.
+### Turn 7 (assembly)
+- book/assemble.py and book/style.css copied from handoff/. book/style.css ALSO has page numbers added at the end
+  (@page @bottom-center counter(page), none on the cover); Chrome 153 supports page-margin boxes.
+- Result: 166 A4 pages, 21 chapters, about 61,900 words (code included). Over the brief's 100-120 pages; ch17's
+  embedded code is 35 pages. No blank pages, no overflow found on a full thumbnail check.
+- Deliverables: book/Self_Checkout_Kiosk_Project_Book.pdf (+ .html), book/src/README.md,
+  book/Self_Checkout_Kiosk_src.zip (src without __pycache__).
