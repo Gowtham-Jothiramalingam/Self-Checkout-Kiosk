@@ -189,3 +189,36 @@ Example: 412 g tomato = 1,442 paise = Rs 14.42.
 - Time from item placed to name on screen: about 1.5 s (1.2 s settling + 0.3 s photo and prediction).
 - Start-up: load weights (once) -> open camera -> set up GPIO -> read config.json -> tare (20 readings,
   2 s) -> show the first screen -> start the tick.
+
+## ADDED DURING WRITING (later chapters and code must agree with these)
+### Added in chapters 1-5
+- Screen GND goes to pin 9 (pin 6 already holds the HX711 GND; one jumper per pin). Screen 5 V on pin 2.
+- Jumper colours: red power, black ground, yellow DT, blue SCK. Jumpers 20 cm female-female.
+  Load cell leads about 25 cm. HX711 board screwed to the base right below the Pi.
+- Webcam and LED strip both in the black USB 2.0 ports. LED strip: 30 cm white, 5 V USB, always on.
+- Tray 25 cm x 20 cm, blue; camera at 35 cm sees about 29 cm x 22 cm. At least 5 mm gap around the tray.
+- Load cell: aluminium bar about 80 mm x 12.7 mm x 12.7 mm, 4 gauges of about 1,000 ohm, rated output
+  1 mV/V, safe to about 150% of 5 kg. Bridge excitation about 3 V when the HX711 runs on 3.3 V.
+  Full 5 kg about 3 mV; a 412 g tomato about 0.25 mV, x128 = about 32 mV.
+  Worked raw example: 412 g -> 123,450 + 412 x 431 = 301,022 counts.
+- Multimeter check of load cell wires: E+/E- about 1,000 ohm, A+/A- about 1,000 ohm, mixed pair about 750 ohm.
+- micro-SD card 32 GB class 10 A1. Heat sink set on the Pi.
+- Parts prices (Rs, 2025): Pi 4 4 GB 5,800; supply 800; SD 450; 7-inch screen 6,200; heat sinks 150;
+  C270 1,700 (reused); load cell + HX711 250 (reused); LED strip 150; jumpers 100; screws/spacers 150;
+  MDF frame + tray 600 (reused). Total 16,350; new parts 13,800.
+- Pi setup: hostname kiosk, user kiosk (ssh kiosk@kiosk.local), time zone Asia/Kolkata, Desktop Autologin,
+  Screen Blanking off, VNC only during setup. Repo cloned to /home/kiosk/Self-Checkout-Kiosk.
+- apt: sudo apt remove -y python3-rpi.gpio; sudo apt install -y python3-numpy python3-opencv python3-tk
+  python3-rpi-lgpio. Pi versions printed: numpy 1.24.2, OpenCV 4.6.0. Code must work on NumPy 1.24.
+- Laptop: python -m venv .venv; pip install numpy opencv-python matplotlib.
+- Camera test prints "True (480, 640, 3)". The app throws away a few warm-up frames after opening the camera.
+- Weights copy: scp classifier/weights.npz kiosk@kiosk.local:~/Self-Checkout-Kiosk/classifier/
+  The final weights.npz and metrics.json are also committed to the repository.
+- Autostart: systemd USER service ~/.config/systemd/user/kiosk.service, WorkingDirectory
+  /home/kiosk/Self-Checkout-Kiosk/kiosk, Environment=DISPLAY=:0,
+  ExecStart=/usr/bin/python3 /home/kiosk/Self-Checkout-Kiosk/kiosk/kiosk_app.py, Restart=on-failure,
+  RestartSec=3, WantedBy=default.target. Logs: journalctl --user -u kiosk.service -f.
+  => kiosk_app.py must find every file relative to its own folder, and import cnn_numpy from ../classifier.
+- Boot to "Place an item": about 35 s (predicted); app start-up itself about 4 s including the 2 s tare.
+- Under-voltage lightning symbol below about 4.63 V. Power draw 1.1 A = about 5.5 W.
+- Pi forward pass is about 4x slower than the laptop (18 ms vs 4 ms); training on the Pi would take ~2 h.

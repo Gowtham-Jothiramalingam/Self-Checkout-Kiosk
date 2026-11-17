@@ -1,0 +1,781 @@
+<section class="chapter" id="ch1">
+<h1><span class="num">1</span> The kiosk on one page</h1>
+<p class="small">Short version: I built a small checkout box that looks at a fruit or vegetable, weighs it, and adds the right price to a bill. All of the thinking happens on a Raspberry Pi 4 inside the box, with an image classifier I wrote myself in NumPy.</p>
+
+<h2>The kiosk in one sentence</h2>
+<p>The Edge-AI Self-Checkout Kiosk is a box with a tray, a camera and a touchscreen. A customer puts one loose fruit or vegetable on the tray. The kiosk names the item, weighs it, works out the price, and adds a line to an itemised bill on the screen.</p>
+<p>It knows 12 Indian fruits and vegetables: Apple, Beetroot, Brinjal, Brinjal White, Coconut, Guava, Lemon, Mosambi, Onion, Pomegranate, Potato and Tomato. Mosambi is the sweet lime sold all over India. Brinjal White is the pale variety of brinjal (eggplant).</p>
+<p>Everything runs on one Raspberry Pi 4. There is no laptop, no internet connection and no cloud server. The Pi reads the camera, runs the classifier, reads the scale, and draws the screen.</p>
+
+<h2>The three jobs: see, weigh, bill</h2>
+<p>The whole project is three jobs joined together. I find it easiest to remember the kiosk this way, and it is also how I explain it to other people.</p>
+<table>
+<thead><tr><th>Job</th><th>What does it</th><th>What comes out</th><th>Chapters</th></tr></thead>
+<tbody>
+<tr><td>See</td><td>USB camera, OpenCV for preparing the photo, my own NumPy CNN for naming it</td><td>A class name such as "Tomato" and a confidence such as 0.97</td><td>6 to 11</td></tr>
+<tr><td>Weigh</td><td>5 kg load cell, HX711 board, two GPIO pins on the Pi, my filter code</td><td>A steady weight such as 412 g</td><td>12, 13</td></tr>
+<tr><td>Bill</td><td>Price table file, bill code in whole paise, Tkinter touchscreen app</td><td>A bill line "Tomato, 412 g, Rs 35/kg, Rs 14.42" and a running total</td><td>14, 15</td></tr>
+</tbody>
+</table>
+<p>The see job answers "what is it?". The weigh job answers "how much is there?". The bill job multiplies the two answers into money and shows it. None of the three jobs is hard alone. The work of the project is doing each one carefully and joining them so that a person can use the box without help.</p>
+
+<figure>
+<svg width="700" height="330" viewBox="0 0 700 330" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<defs><marker id="a11" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1c2b33"/></marker></defs>
+<rect x="150" y="10" width="540" height="310" rx="10" fill="none" stroke="#0f7c8c" stroke-width="2" stroke-dasharray="6,4"/>
+<text x="160" y="30" fill="#0f7c8c" font-weight="bold">Inside the Raspberry Pi 4 (Python program)</text>
+<rect x="10" y="50" width="120" height="44" rx="6" fill="#e9f3f6" stroke="#5b7083"/>
+<text x="70" y="70" text-anchor="middle" fill="#1c2b33">USB camera</text><text x="70" y="86" text-anchor="middle" fill="#5b7083" font-size="11">640 x 480 photo</text>
+<rect x="175" y="50" width="130" height="44" rx="6" fill="#e9f3f6" stroke="#0f7c8c"/>
+<text x="240" y="70" text-anchor="middle" fill="#1c2b33">Prepare (OpenCV)</text><text x="240" y="86" text-anchor="middle" fill="#5b7083" font-size="11">crop, 64 x 64, scale</text>
+<rect x="335" y="50" width="130" height="44" rx="6" fill="#e9f3f6" stroke="#0f7c8c"/>
+<text x="400" y="70" text-anchor="middle" fill="#1c2b33">CNN (my NumPy)</text><text x="400" y="86" text-anchor="middle" fill="#5b7083" font-size="11">12 chances</text>
+<rect x="495" y="50" width="120" height="44" rx="6" fill="#e9f3f6" stroke="#0f7c8c"/>
+<text x="555" y="70" text-anchor="middle" fill="#1c2b33">Item name</text><text x="555" y="86" text-anchor="middle" fill="#5b7083" font-size="11">"Tomato", 0.97</text>
+<line x1="130" y1="72" x2="173" y2="72" stroke="#1c2b33" marker-end="url(#a11)"/>
+<line x1="305" y1="72" x2="333" y2="72" stroke="#1c2b33" marker-end="url(#a11)"/>
+<line x1="465" y1="72" x2="493" y2="72" stroke="#1c2b33" marker-end="url(#a11)"/>
+<rect x="10" y="150" width="120" height="44" rx="6" fill="#e9f3f6" stroke="#5b7083"/>
+<text x="70" y="170" text-anchor="middle" fill="#1c2b33">Load cell</text><text x="70" y="186" text-anchor="middle" fill="#5b7083" font-size="11">bends a tiny bit</text>
+<rect x="10" y="230" width="120" height="44" rx="6" fill="#e9f3f6" stroke="#5b7083"/>
+<text x="70" y="250" text-anchor="middle" fill="#1c2b33">HX711 board</text><text x="70" y="266" text-anchor="middle" fill="#5b7083" font-size="11">amplify + 24-bit</text>
+<line x1="70" y1="194" x2="70" y2="228" stroke="#1c2b33" marker-end="url(#a11)"/>
+<line x1="130" y1="252" x2="173" y2="252" stroke="#d9822b" stroke-width="3" marker-end="url(#a11)"/>
+<text x="70" y="292" text-anchor="middle" fill="#d9822b" font-size="11">2 wires: DT, SCK</text>
+<rect x="175" y="230" width="130" height="44" rx="6" fill="#e9f3f6" stroke="#0f7c8c"/>
+<text x="240" y="250" text-anchor="middle" fill="#1c2b33">Read + filter</text><text x="240" y="266" text-anchor="middle" fill="#5b7083" font-size="11">median, steady</text>
+<rect x="335" y="230" width="130" height="44" rx="6" fill="#e9f3f6" stroke="#0f7c8c"/>
+<text x="400" y="250" text-anchor="middle" fill="#1c2b33">Steady grams</text><text x="400" y="266" text-anchor="middle" fill="#5b7083" font-size="11">412 g</text>
+<line x1="305" y1="252" x2="333" y2="252" stroke="#1c2b33" marker-end="url(#a11)"/>
+<rect x="495" y="140" width="120" height="54" rx="6" fill="#fdf0e2" stroke="#d9822b"/>
+<text x="555" y="162" text-anchor="middle" fill="#1c2b33">Price + bill</text><text x="555" y="180" text-anchor="middle" fill="#5b7083" font-size="11">prices.csv, paise</text>
+<line x1="555" y1="94" x2="555" y2="138" stroke="#1c2b33" marker-end="url(#a11)"/>
+<line x1="465" y1="245" x2="520" y2="196" stroke="#1c2b33" marker-end="url(#a11)"/>
+<rect x="495" y="230" width="180" height="70" rx="6" fill="#e9f3f6" stroke="#0f7c8c"/>
+<text x="585" y="252" text-anchor="middle" fill="#1c2b33">Touchscreen app</text><text x="585" y="270" text-anchor="middle" fill="#5b7083" font-size="11">7 inch, 800 x 480</text><text x="585" y="286" text-anchor="middle" fill="#5b7083" font-size="11">Tomato 412 g Rs 14.42</text>
+<line x1="600" y1="194" x2="600" y2="228" stroke="#1c2b33" marker-end="url(#a11)"/>
+<text x="70" y="120" text-anchor="middle" fill="#5b7083" font-size="11">tray rests on it</text>
+<line x1="70" y1="125" x2="70" y2="148" stroke="#5b7083" stroke-dasharray="3,3"/>
+</svg>
+<figcaption>Figure 1.1. The whole kiosk. The top row is the "see" job, the bottom row is the "weigh" job, and the orange box joins them into money. Everything inside the dashed line is one Python program on the Raspberry Pi 4. Only the two orange wires (DT and SCK) connect the scale to the Pi.</figcaption>
+</figure>
+
+<h2>What the words in the title mean</h2>
+<p>The project title packs many words together. Each one says something real about the build, so here they are one at a time.</p>
+<table>
+<thead><tr><th>Word</th><th>Plain meaning</th><th>What it means in this kiosk</th></tr></thead>
+<tbody>
+<tr><td>Edge</td><td>The computing happens on the device itself, at the "edge" of the network, not on a far-away server.</td><td>The Pi inside the box does all the work. No photo ever leaves the box.</td></tr>
+<tr><td>AI</td><td>A program that learned its behaviour from examples instead of being given rules by hand.</td><td>The classifier learned what a tomato looks like from about 1,290 example crops.</td></tr>
+<tr><td>Image classification</td><td>Giving one label to a whole picture, from a fixed list of labels.</td><td>Each 64 x 64 photo of one item gets one of 12 names.</td></tr>
+<tr><td>CNN</td><td>Convolutional neural network. A network that slides small pattern detectors (filters) over the picture.</td><td>Three convolution layers and two dense layers, 80,604 numbers in total (chapter 7).</td></tr>
+<tr><td>From scratch</td><td>Written by me with only basic maths tools, without a deep learning library.</td><td>Only NumPy (fast arrays). No PyTorch, no TensorFlow. I wrote the forward and backward pass of every layer.</td></tr>
+<tr><td>Load cell</td><td>A metal bar with strain gauges glued on. When it bends, its electrical resistance changes very slightly.</td><td>A 5 kg bar load cell holds the tray.</td></tr>
+<tr><td>HX711</td><td>A small chip that amplifies the tiny load cell signal and turns it into a 24-bit number.</td><td>A green HX711 board talks to the Pi over two wires (chapter 12).</td></tr>
+<tr><td>Itemised bill</td><td>A bill with one line per item, not just a total.</td><td>Each line shows name, grams, rupees per kg and rupees, then a total.</td></tr>
+</tbody>
+</table>
+
+<div class="box why"><div class="label">Why "from scratch" at all?</div><p>A framework such as PyTorch would have trained a better model faster. I wrote the CNN myself because I wanted to understand and be able to explain every number inside it. It also kept the Pi light: the kiosk needs only NumPy and OpenCV, which install from the Pi's own package list in a minute. A small network written well was accurate enough for 12 items. Chapter 20 says honestly what a product version would use instead.</p></div>
+
+<h2>Why the project exists</h2>
+<p>Packed goods in a shop carry a barcode. A self-checkout machine scans the barcode and knows the item and the price at once. Loose fruit and vegetables have no barcode. A tomato is just a tomato, and its price depends on its weight.</p>
+<p>In most shops today a staff member weighs the produce, presses a button for the item on a scale, and a sticker with a barcode comes out. That needs a trained person, and it is the slowest step at the counter, especially in Indian markets where most produce is sold loose.</p>
+<p>My kiosk replaces that step. The camera replaces the person's eyes, the load cell replaces the counter scale, and the bill code replaces the sticker. The customer only puts the item down, checks the name on the screen, and taps "Add to bill".</p>
+
+<div class="box story"><div class="label">Design story</div><p>My first version of this idea was a B.Tech team project in 2024. It used a laptop running a YOLOv5 detector, an ESP8266 Wi-Fi board reading the scale, and a phone hotspot to connect them. It worked at the demo, but it needed three devices switched on and connected, and the model was far too heavy for a small box. Version 2, the one this book describes, puts everything on one Raspberry Pi 4. Chapter 20 tells the whole journey.</p></div>
+
+<h2>One customer, from start to bill</h2>
+<p>Here is what happens when a customer uses the kiosk. The kiosk program checks the scale 10 times every second, in a short repeating step I call the tick (chapter 14).</p>
+<ol>
+<li>The screen says "Place an item". The tray is empty and the scale reads close to 0 g.</li>
+<li>The customer puts a tomato on the tray. The weight rises above 20 g, so the kiosk knows something is there and shows the live weight.</li>
+<li>The kiosk waits until the weight is steady. Steady means the newest 8 cleaned readings agree within 2 g. At 10 readings per second this takes about 1.2 s.</li>
+<li>The kiosk takes one photo, prepares it, and runs the CNN. This takes about 60 ms on the Pi. The screen shows "Tomato", "412 g" and "Rs 14.42".</li>
+<li>The customer taps "Add to bill". If the name is wrong, they tap "Wrong item" and choose the right one from a list.</li>
+<li>The screen says "Take the item off". When the weight drops below 10 g, the kiosk goes back to "Place an item".</li>
+<li>After the last item, the customer taps "Finish" and sees the itemised bill with the total. "New customer" clears it.</li>
+</ol>
+
+<figure>
+<svg width="700" height="190" viewBox="0 0 700 190" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<defs><marker id="a12" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1c2b33"/></marker></defs>
+<line x1="20" y1="150" x2="680" y2="150" stroke="#5b7083" marker-end="url(#a12)"/>
+<text x="640" y="172" fill="#5b7083" font-size="11">time</text>
+<rect x="20" y="40" width="120" height="60" rx="6" fill="#e9f3f6" stroke="#5b7083"/>
+<text x="80" y="64" text-anchor="middle" fill="#1c2b33">Waiting</text><text x="80" y="82" text-anchor="middle" fill="#5b7083" font-size="11">"Place an item"</text>
+<rect x="150" y="40" width="170" height="60" rx="6" fill="#e9f3f6" stroke="#0f7c8c"/>
+<text x="235" y="64" text-anchor="middle" fill="#1c2b33">Settling</text><text x="235" y="82" text-anchor="middle" fill="#5b7083" font-size="11">live weight, about 1.2 s</text>
+<rect x="330" y="40" width="90" height="60" rx="6" fill="#fdf0e2" stroke="#d9822b"/>
+<text x="375" y="64" text-anchor="middle" fill="#1c2b33">Identify</text><text x="375" y="82" text-anchor="middle" fill="#5b7083" font-size="11">60 ms</text>
+<rect x="430" y="40" width="130" height="60" rx="6" fill="#e9f3f6" stroke="#0f7c8c"/>
+<text x="495" y="64" text-anchor="middle" fill="#1c2b33">Showing</text><text x="495" y="82" text-anchor="middle" fill="#5b7083" font-size="11">name, g, Rs</text>
+<rect x="570" y="40" width="110" height="60" rx="6" fill="#e9f3f6" stroke="#5b7083"/>
+<text x="625" y="64" text-anchor="middle" fill="#1c2b33">Remove</text><text x="625" y="82" text-anchor="middle" fill="#5b7083" font-size="11">below 10 g</text>
+<line x1="150" y1="120" x2="150" y2="150" stroke="#d9822b" stroke-width="2"/><text x="150" y="115" text-anchor="middle" fill="#d9822b" font-size="11">item put down (above 20 g)</text>
+<line x1="430" y1="120" x2="430" y2="150" stroke="#d9822b" stroke-width="2"/><text x="430" y="115" text-anchor="middle" fill="#d9822b" font-size="11">name on screen, about 1.5 s later</text>
+<text x="20" y="25" fill="#1c2b33">The five screens of the app, left to right, for one item</text>
+</svg>
+<figcaption>Figure 1.2. One item through the kiosk. Most of the 1.5 s from "item put down" to "name on screen" is spent waiting for the weight to become steady, not running the CNN.</figcaption>
+</figure>
+
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>In my tests the time from putting the item down to seeing its name on the screen was about 1.5 s: about 1.2 s for the weight to settle and about 0.3 s for the photo, the prediction and the screen update. The CNN forward pass alone took 18 ms on the Pi 4.</p></div>
+
+<div class="box why"><div class="label">Why does the weight start the camera?</div><p>The scale is the cheapest and most reliable sensor in the box. When the weight becomes steady, I know an item is there, the customer's hand has left it, and it has stopped rolling. That is exactly the moment to take a good photo. Running the CNN on every camera frame would waste the Pi's processor and often see a moving hand instead of the item.</p></div>
+
+<h2>The results in numbers</h2>
+<p>These are the headline numbers of the finished kiosk. Every one of them is explained later in the book.</p>
+<table>
+<thead><tr><th>What</th><th>Value</th><th>Chapter</th></tr></thead>
+<tbody>
+<tr><td>Classes</td><td>12 fruits and vegetables</td><td>10</td></tr>
+<tr><td>Network size</td><td>80,604 weights, 5 layers with weights</td><td>7</td></tr>
+<tr><td>Test accuracy</td><td>92.6% (262 of 283 test crops)</td><td>10</td></tr>
+<tr><td>Prediction time on the Pi 4</td><td>18 ms forward pass, about 60 ms with photo and preparation</td><td>11</td></tr>
+<tr><td>Scale error</td><td>within 2 g from 100 g to 2 kg</td><td>13</td></tr>
+<tr><td>Time to a steady weight</td><td>about 1.2 s</td><td>13</td></tr>
+<tr><td>Power draw</td><td>about 1.1 A at 5 V with screen and camera</td><td>16</td></tr>
+</tbody>
+</table>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>In my run the test accuracy was 92.6% (262 of 283 test crops correct). The most confused pair was Mosambi and Lemon, with 7 of the 21 mistakes. Both are round and green-yellow from above.</p></div>
+
+<div class="box careful"><div class="label">Be careful</div><p>92.6% is accuracy on test crops cut from my own photos, taken in the same box under the same light. It is not a promise about a real shop with new customers, new lighting and new varieties. I always say this clearly when I quote the number. Chapter 10 explains what the number does and does not mean.</p></div>
+
+<h2>How I explain it in 40 seconds</h2>
+<div class="box tip"><div class="label">Interview tip</div><p>"Loose fruit and vegetables have no barcode, so someone has to weigh them and key in the item. I built a self-checkout kiosk that does this alone. It runs entirely on a Raspberry Pi 4. A 5 kg load cell under the tray goes through an HX711 amplifier straight into two GPIO pins, and I filter the readings with a median and a steadiness check. When the weight is steady, a webcam takes one photo, and a CNN I wrote from scratch in NumPy names the item from 12 classes. It reaches 92.6% test accuracy and takes about 18 ms per photo on the Pi. The app multiplies the weight by the price per kilo, keeps money in whole paise, and shows an itemised bill on a touchscreen. If the network is unsure or wrong, the customer picks the right item from the top three guesses."</p></div>
+<p>I practise this until it takes about 40 seconds. It covers the problem, the three jobs, the two hardest parts (the from-scratch CNN and the scale on the Pi's pins), one strong number, and one honest safety feature. After it, the interviewer usually picks one part to dig into, and the rest of this book prepares each part.</p>
+
+<h2>Every resume claim and where it is explained</h2>
+<p>My resume has three bullet points about this project. Each phrase in them must be something I can defend in detail. This table maps each phrase to the chapter that explains it.</p>
+<table>
+<thead><tr><th>Resume phrase</th><th>What is behind it</th><th>Chapters</th></tr></thead>
+<tbody>
+<tr><td>Raspberry Pi 4</td><td>The only computer in the kiosk; its pins, its limits, its setup</td><td>2, 4, 5, 16</td></tr>
+<tr><td>Python, NumPy, OpenCV</td><td>NumPy for the CNN maths, OpenCV for the camera and image preparation</td><td>6, 9, 17</td></tr>
+<tr><td>HX711</td><td>The load cell amplifier and converter, read bit by bit from Python</td><td>3, 12</td></tr>
+<tr><td>image classification to identify 12 Indian fruits and vegetables</td><td>One label per photo, 12 classes in a fixed order</td><td>6, 10</td></tr>
+<tr><td>calculates the price from a load cell</td><td>Calibrated grams times rupees per kg, in paise</td><td>13, 14</td></tr>
+<tr><td>CNN image classifier from scratch in Python</td><td>Every layer forward and backward, written in NumPy, checked by a gradient check</td><td>7, 8, 9</td></tr>
+<tr><td>92.6% test accuracy</td><td>262 of 283 held-out crops, split by photo</td><td>10</td></tr>
+<tr><td>running on-device on the Raspberry Pi 4</td><td>18 ms forward pass, weights loaded once</td><td>11</td></tr>
+<tr><td>Connected the HX711 directly to the Pi</td><td>DT on GPIO 5, SCK on GPIO 6, 3.3 V power</td><td>4, 12</td></tr>
+<tr><td>filtered the readings for stable weights</td><td>Median of 5, then steady when 8 readings agree within 2 g</td><td>13</td></tr>
+<tr><td>touchscreen app that shows an itemised bill</td><td>Tkinter, five states, "Wrong item" correction, bill in paise</td><td>14, 15</td></tr>
+</tbody>
+</table>
+
+<div class="box why"><div class="label">Why map every phrase?</div><p>In an interview, any word on the resume is fair game. If I wrote "filtered", I must be able to say which filter, why that filter, and what it costs. Mapping every phrase to a chapter made sure no claim on the resume is bigger than the work behind it.</p></div>
+
+<h2>How this book is organised</h2>
+<p>Chapters 2 to 5 cover the hardware and the software setup: the Pi, the other parts, the wiring, and installing everything. Chapters 6 to 11 cover the "see" job, from pixels to a trained network running on the Pi. Chapters 12 and 13 cover the "weigh" job. Chapters 14 to 16 cover the app, how the program is organised, and the physical build. Chapter 17 is the complete code. Chapter 18 is the build record step by step. Chapters 19 and 20 cover problems, the design journey and the limits. Chapter 21 is a bank of interview questions with answers and a one-page cheat sheet.</p>
+<p>Purple "Measured value" boxes hold numbers that only a real run or a real test can give, such as accuracy or calibration counts. Design numbers, such as pin numbers and layer sizes, are facts of the design and appear in normal text.</p>
+</section>
+<section class="chapter" id="ch2">
+<h1><span class="num">2</span> The Raspberry Pi 4, from zero</h1>
+<p class="small">Short version: the Raspberry Pi 4 is a full computer on one small board. It runs Linux, Python and the camera, and it has 40 pins for wiring sensors. It has three weak points for this project: no analog input, 3.3 V pins, and timing that Linux can pause at any moment. Each weak point shaped a design choice.</p>
+
+<h2>A single-board computer, not a microcontroller</h2>
+<p>A single-board computer is a complete computer built on one small circuit board. It has a processor, memory, storage, USB ports and a video output, and it runs a full operating system. The operating system is the base program that manages files, programs, the screen and the network. On the Pi this is Linux, the same family of system that runs most web servers.</p>
+<p>A microcontroller is a much smaller chip that runs one program directly, with no operating system. The ESP8266 in my first version and the chip on an Arduino board are microcontrollers. They start in a fraction of a second, use very little power, and react to a pin change in a few millionths of a second. But they have only a few hundred kilobytes of memory, far too little to hold a camera photo and run a neural network on it.</p>
+<table>
+<thead><tr><th></th><th>Raspberry Pi 4 (single-board computer)</th><th>ESP8266 (microcontroller)</th></tr></thead>
+<tbody>
+<tr><td>Processor</td><td>4 cores, 1.5 GHz, 64-bit</td><td>1 core, 80 MHz, 32-bit</td></tr>
+<tr><td>Memory (RAM)</td><td>4 GB</td><td>about 80 kB for my program</td></tr>
+<tr><td>Storage</td><td>micro-SD card, 32 GB in my kiosk</td><td>4 MB flash</td></tr>
+<tr><td>Operating system</td><td>Linux (Raspberry Pi OS)</td><td>none, one program runs forever</td></tr>
+<tr><td>Runs Python, NumPy, OpenCV</td><td>yes</td><td>no</td></tr>
+<tr><td>USB camera, touchscreen</td><td>yes</td><td>no</td></tr>
+<tr><td>Exact pin timing</td><td>no, Linux can pause the program</td><td>yes</td></tr>
+<tr><td>Analog input</td><td>none</td><td>one pin</td></tr>
+</tbody>
+</table>
+<p>An analogy helps me. A microcontroller is a kitchen timer: it does one small job, always on time. A single-board computer is a small office worker: it can do almost anything, but sometimes it is busy with something else for a moment. The kiosk needs the office worker for the camera, the network and the screen. The only part that would prefer the kitchen timer is the scale, and chapter 12 shows how I handled that.</p>
+
+<h2>What is on the board</h2>
+<p>I used the Raspberry Pi 4 Model B with 4 GB of RAM. These are the parts of the board that matter for the kiosk.</p>
+<table>
+<thead><tr><th>Part</th><th>What it is, in plain words</th><th>Used in the kiosk for</th></tr></thead>
+<tbody>
+<tr><td>BCM2711 processor</td><td>The main chip. Four ARM Cortex-A72 cores (four separate workers) at 1.5 GHz, which means 1.5 billion small steps per second per core.</td><td>Running Python, the CNN, the app</td></tr>
+<tr><td>4 GB RAM</td><td>Fast working memory that is wiped when power goes off.</td><td>Holding the program, the weights (320 kB) and the photo; the kiosk uses well under 1 GB</td></tr>
+<tr><td>micro-SD slot</td><td>The "hard disk". The operating system and all files live on a micro-SD card.</td><td>Raspberry Pi OS, my code, weights.npz, prices.csv</td></tr>
+<tr><td>USB-C power socket</td><td>Where 5 V power comes in.</td><td>The official 5 V 3 A supply</td></tr>
+<tr><td>2 micro-HDMI ports</td><td>Video out to normal monitors.</td><td>Only during setup; the kiosk uses the touchscreen</td></tr>
+<tr><td>4 USB ports (2 blue USB 3.0, 2 black USB 2.0)</td><td>For keyboards, cameras, memory sticks.</td><td>The webcam and the LED strip</td></tr>
+<tr><td>Gigabit Ethernet, Wi-Fi, Bluetooth</td><td>Network connections.</td><td>Only for setup and copying files; the kiosk itself needs no network</td></tr>
+<tr><td>DSI connector</td><td>Display Serial Interface. A flat ribbon socket made for small screens.</td><td>The 7-inch touchscreen</td></tr>
+<tr><td>CSI connector</td><td>Camera Serial Interface. A ribbon socket for the official Pi cameras.</td><td>Not used; I kept the USB webcam from version 1</td></tr>
+<tr><td>40-pin header</td><td>Two rows of metal pins for wiring your own electronics.</td><td>The HX711 (4 pins) and the screen power (2 pins)</td></tr>
+</tbody>
+</table>
+
+<figure>
+<svg width="700" height="300" viewBox="0 0 700 300" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<rect x="120" y="40" width="460" height="230" rx="14" fill="#e9f3f6" stroke="#0f7c8c" stroke-width="2"/>
+<rect x="150" y="50" width="330" height="26" rx="3" fill="#ffffff" stroke="#d9822b" stroke-width="2"/>
+<text x="315" y="68" text-anchor="middle" fill="#1c2b33">40-pin GPIO header (pin 1 at left end)</text>
+<rect x="250" y="120" width="90" height="70" rx="4" fill="#ffffff" stroke="#5b7083"/>
+<text x="295" y="152" text-anchor="middle" fill="#1c2b33">BCM2711</text><text x="295" y="170" text-anchor="middle" fill="#5b7083" font-size="11">4 cores</text>
+<rect x="360" y="120" width="70" height="50" rx="4" fill="#ffffff" stroke="#5b7083"/>
+<text x="395" y="150" text-anchor="middle" fill="#1c2b33">4 GB</text>
+<rect x="510" y="60" width="90" height="50" rx="3" fill="#ffffff" stroke="#5b7083"/><text x="555" y="90" text-anchor="middle" fill="#1c2b33">Ethernet</text>
+<rect x="510" y="125" width="90" height="55" rx="3" fill="#ffffff" stroke="#5b7083"/><text x="555" y="150" text-anchor="middle" fill="#1c2b33">USB x2</text><text x="555" y="168" text-anchor="middle" fill="#5b7083" font-size="11">camera here</text>
+<rect x="510" y="195" width="90" height="55" rx="3" fill="#ffffff" stroke="#5b7083"/><text x="555" y="225" text-anchor="middle" fill="#1c2b33">USB x2</text>
+<rect x="150" y="240" width="40" height="40" rx="3" fill="#ffffff" stroke="#d9822b"/><text x="170" y="296" text-anchor="middle" fill="#1c2b33" font-size="11">USB-C 5 V</text>
+<rect x="215" y="245" width="30" height="35" rx="3" fill="#ffffff" stroke="#5b7083"/><rect x="265" y="245" width="30" height="35" rx="3" fill="#ffffff" stroke="#5b7083"/>
+<text x="255" y="296" text-anchor="middle" fill="#1c2b33" font-size="11">2 micro-HDMI</text>
+<rect x="320" y="215" width="70" height="12" fill="#ffffff" stroke="#5b7083"/><text x="355" y="208" text-anchor="middle" fill="#5b7083" font-size="11">CSI camera</text>
+<rect x="130" y="110" width="12" height="80" fill="#ffffff" stroke="#0f7c8c" stroke-width="2"/><text x="40" y="150" text-anchor="middle" fill="#0f7c8c" font-size="11">DSI screen</text><text x="40" y="164" text-anchor="middle" fill="#0f7c8c" font-size="11">ribbon</text>
+<line x1="75" y1="155" x2="128" y2="155" stroke="#0f7c8c"/>
+<rect x="85" y="200" width="40" height="40" fill="none"/><text x="60" y="235" text-anchor="middle" fill="#5b7083" font-size="11">micro-SD</text><text x="60" y="249" text-anchor="middle" fill="#5b7083" font-size="11">(underside)</text>
+<line x1="85" y1="232" x2="120" y2="210" stroke="#5b7083" stroke-dasharray="3,3"/>
+<text x="350" y="25" text-anchor="middle" fill="#1c2b33">Raspberry Pi 4 Model B, seen from above (not to scale)</text>
+</svg>
+<figcaption>Figure 2.1. The parts of the Pi 4 board the kiosk uses. Orange marks the two places where the kiosk's own wires go: the USB-C power socket and the 40-pin header. The touchscreen uses the DSI ribbon; the camera uses a USB port.</figcaption>
+</figure>
+
+<h2>Raspberry Pi OS and Linux in plain words</h2>
+<p>Raspberry Pi OS is a version of Debian Linux made for the Pi. I used the Bookworm release, 64-bit, with the desktop. "Bookworm" is just the name of Debian version 12. "64-bit" means the processor handles numbers and memory addresses 64 bits wide, which suits NumPy well.</p>
+<p>Linux runs many programs at once. It gives each program short slices of processor time, switching between them hundreds of times a second. This is called multitasking. My kiosk program is one of many running programs; others draw the desktop, manage Wi-Fi and write log files. Usually my program gets plenty of time. But Linux decides when each program runs, not my program. That matters for the scale, as the third weak point below explains.</p>
+<p>Python 3.11 comes installed with Bookworm. The packages I need (NumPy, OpenCV, Tkinter and the GPIO library) come from the operating system's own package list with the <code>apt</code> command, as chapter 5 shows.</p>
+<div class="box why"><div class="label">Why the 64-bit desktop version, and why 4 GB?</div><p>NumPy runs its inner loops in compiled code that is built to use the 64-bit processor's wide registers, so the 64-bit system runs the CNN faster than the 32-bit one on the same board. I chose the desktop version because the kiosk app is a window on a screen; the "Lite" version has no desktop. 4 GB of RAM is more than the kiosk needs (it uses well under 1 GB), but it leaves room for the desktop, VNC during setup, and a test run of training if I ever want one, without the Pi swapping memory to the slow SD card.</p></div>
+
+<h2>The 40-pin header</h2>
+<p>The 40-pin header is two rows of 20 pins along one edge of the board. GPIO means General Purpose Input Output. A GPIO pin is a pin my program can set high (3.3 V) or low (0 V), or read as high or low. Some pins are not GPIO at all; they give fixed power (3.3 V or 5 V) or ground (0 V, the common reference point every voltage is measured from).</p>
+<p>Pins have two names. The physical pin number counts positions on the header: pin 1 is at the end farthest from the USB ports, on the row nearer the middle of the board. Odd numbers run along the inside row, even numbers along the outside row at the board edge. The GPIO number (also called the BCM number) is the name the processor chip uses. Physical pin 29 is GPIO 5. My code always uses GPIO numbers, and my wiring notes always give both, because mixing them up is the most common wiring mistake on a Pi.</p>
+
+<table>
+<thead><tr><th>Physical pin</th><th>Function</th><th>Used in this project</th><th>Physical pin</th><th>Function</th><th>Used in this project</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>3V3 power</td><td><b>HX711 VCC</b></td><td>2</td><td>5V power</td><td><b>Screen 5 V</b></td></tr>
+<tr><td>3</td><td>GPIO2 (SDA)</td><td></td><td>4</td><td>5V power</td><td></td></tr>
+<tr><td>5</td><td>GPIO3 (SCL)</td><td></td><td>6</td><td>GND</td><td><b>HX711 GND</b></td></tr>
+<tr><td>7</td><td>GPIO4</td><td></td><td>8</td><td>GPIO14 (TXD)</td><td></td></tr>
+<tr><td>9</td><td>GND</td><td><b>Screen GND</b></td><td>10</td><td>GPIO15 (RXD)</td><td></td></tr>
+<tr><td>11</td><td>GPIO17</td><td></td><td>12</td><td>GPIO18 (PWM)</td><td></td></tr>
+<tr><td>13</td><td>GPIO27</td><td></td><td>14</td><td>GND</td><td></td></tr>
+<tr><td>15</td><td>GPIO22</td><td></td><td>16</td><td>GPIO23</td><td></td></tr>
+<tr><td>17</td><td>3V3 power</td><td></td><td>18</td><td>GPIO24</td><td></td></tr>
+<tr><td>19</td><td>GPIO10 (MOSI)</td><td></td><td>20</td><td>GND</td><td></td></tr>
+<tr><td>21</td><td>GPIO9 (MISO)</td><td></td><td>22</td><td>GPIO25</td><td></td></tr>
+<tr><td>23</td><td>GPIO11 (SCLK)</td><td></td><td>24</td><td>GPIO8 (CE0)</td><td></td></tr>
+<tr><td>25</td><td>GND</td><td></td><td>26</td><td>GPIO7 (CE1)</td><td></td></tr>
+<tr><td>27</td><td>ID_SD (reserved)</td><td>never use</td><td>28</td><td>ID_SC (reserved)</td><td>never use</td></tr>
+<tr><td>29</td><td>GPIO5</td><td><b>HX711 DT</b></td><td>30</td><td>GND</td><td></td></tr>
+<tr><td>31</td><td>GPIO6</td><td><b>HX711 SCK</b></td><td>32</td><td>GPIO12 (PWM)</td><td></td></tr>
+<tr><td>33</td><td>GPIO13 (PWM)</td><td></td><td>34</td><td>GND</td><td></td></tr>
+<tr><td>35</td><td>GPIO19</td><td></td><td>36</td><td>GPIO16</td><td></td></tr>
+<tr><td>37</td><td>GPIO26</td><td></td><td>38</td><td>GPIO20</td><td></td></tr>
+<tr><td>39</td><td>GND</td><td></td><td>40</td><td>GPIO21</td><td></td></tr>
+</tbody>
+</table>
+<p>The names in brackets are second jobs some pins can do. SDA and SCL are the two wires of I2C, a common bus for small sensors. MOSI, MISO, SCLK, CE0 and CE1 belong to SPI, a faster bus. TXD and RXD are a serial port. PWM pins can make a steady on-off pulse pattern in hardware, used for dimming LEDs or driving servos. I kept all of these free so the kiosk can grow later.</p>
+
+<figure>
+<svg width="700" height="230" viewBox="0 0 700 230" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<rect x="40" y="70" width="620" height="80" rx="6" fill="#e9f3f6" stroke="#5b7083"/>
+<g fill="#ffffff" stroke="#5b7083">
+<circle cx="62" cy="128" r="9"/><circle cx="92" cy="128" r="9"/><circle cx="122" cy="128" r="9"/><circle cx="152" cy="128" r="9"/><circle cx="182" cy="128" r="9"/><circle cx="212" cy="128" r="9"/><circle cx="242" cy="128" r="9"/><circle cx="272" cy="128" r="9"/><circle cx="302" cy="128" r="9"/><circle cx="332" cy="128" r="9"/><circle cx="362" cy="128" r="9"/><circle cx="392" cy="128" r="9"/><circle cx="422" cy="128" r="9"/><circle cx="452" cy="128" r="9"/><circle cx="482" cy="128" r="9"/><circle cx="512" cy="128" r="9"/><circle cx="542" cy="128" r="9"/><circle cx="572" cy="128" r="9"/><circle cx="602" cy="128" r="9"/><circle cx="632" cy="128" r="9"/>
+<circle cx="62" cy="92" r="9"/><circle cx="92" cy="92" r="9"/><circle cx="122" cy="92" r="9"/><circle cx="152" cy="92" r="9"/><circle cx="182" cy="92" r="9"/><circle cx="212" cy="92" r="9"/><circle cx="242" cy="92" r="9"/><circle cx="272" cy="92" r="9"/><circle cx="302" cy="92" r="9"/><circle cx="332" cy="92" r="9"/><circle cx="362" cy="92" r="9"/><circle cx="392" cy="92" r="9"/><circle cx="422" cy="92" r="9"/><circle cx="452" cy="92" r="9"/><circle cx="482" cy="92" r="9"/><circle cx="512" cy="92" r="9"/><circle cx="542" cy="92" r="9"/><circle cx="572" cy="92" r="9"/><circle cx="602" cy="92" r="9"/><circle cx="632" cy="92" r="9"/>
+</g>
+<rect x="53" y="119" width="18" height="18" fill="#d9822b" stroke="#d9822b"/>
+<circle cx="62" cy="92" r="9" fill="#d9822b" stroke="#d9822b"/>
+<circle cx="122" cy="92" r="9" fill="#d9822b" stroke="#d9822b"/>
+<circle cx="182" cy="128" r="9" fill="#d9822b" stroke="#d9822b"/>
+<circle cx="482" cy="128" r="9" fill="#d9822b" stroke="#d9822b"/>
+<circle cx="512" cy="128" r="9" fill="#d9822b" stroke="#d9822b"/>
+<circle cx="452" cy="128" r="9" fill="#5b7083" stroke="#5b7083"/><circle cx="452" cy="92" r="9" fill="#5b7083" stroke="#5b7083"/>
+<text x="62" y="178" text-anchor="middle" fill="#1c2b33" font-size="11">1</text><text x="62" y="194" text-anchor="middle" fill="#d9822b" font-size="11">3V3</text><text x="62" y="208" text-anchor="middle" fill="#d9822b" font-size="11">HX VCC</text>
+<text x="182" y="178" text-anchor="middle" fill="#1c2b33" font-size="11">9</text><text x="182" y="194" text-anchor="middle" fill="#d9822b" font-size="11">GND</text><text x="182" y="208" text-anchor="middle" fill="#d9822b" font-size="11">screen</text>
+<text x="452" y="178" text-anchor="middle" fill="#1c2b33" font-size="11">27</text><text x="452" y="194" text-anchor="middle" fill="#5b7083" font-size="11">reserved</text>
+<text x="482" y="178" text-anchor="middle" fill="#1c2b33" font-size="11">29</text><text x="490" y="208" text-anchor="end" fill="#d9822b" font-size="11">GPIO5 DT</text>
+<text x="512" y="178" text-anchor="middle" fill="#1c2b33" font-size="11">31</text><text x="504" y="208" text-anchor="start" fill="#d9822b" font-size="11">GPIO6 SCK</text>
+<text x="62" y="58" text-anchor="middle" fill="#1c2b33" font-size="11">2</text><text x="62" y="42" text-anchor="middle" fill="#d9822b" font-size="11">5V screen</text>
+<text x="122" y="58" text-anchor="middle" fill="#1c2b33" font-size="11">6</text><text x="130" y="28" text-anchor="middle" fill="#d9822b" font-size="11">GND HX711</text>
+<text x="452" y="58" text-anchor="middle" fill="#1c2b33" font-size="11">28</text><text x="452" y="42" text-anchor="middle" fill="#5b7083" font-size="11">reserved</text>
+<text x="632" y="58" text-anchor="middle" fill="#1c2b33" font-size="11">40</text><text x="632" y="178" text-anchor="middle" fill="#1c2b33" font-size="11">39</text>
+<text x="350" y="20" text-anchor="middle" fill="#5b7083" font-size="11">outside row (even pins, board edge)</text>
+<text x="350" y="225" text-anchor="middle" fill="#5b7083" font-size="11">inside row (odd pins). Pin 1 has a square pad. USB ports are beyond pin 40.</text>
+</svg>
+<figcaption>Figure 2.2. The 40-pin header seen from above. Orange pins carry the kiosk's six wires: four for the HX711 (pins 1, 6, 29, 31) and two for the screen power (pins 2 and 9). Grey pins 27 and 28 are reserved and must never be used.</figcaption>
+</figure>
+
+<div class="box why"><div class="label">Why GPIO 5 and GPIO 6 for the HX711?</div><p>The HX711 needs two plain GPIO pins, one input and one output. GPIO 5 and GPIO 6 have no second job (no I2C, SPI, serial or PWM), so using them blocks nothing else. They sit next to each other on the inside row (pins 29 and 31) with a ground (pin 30) right beside them, which keeps the wires short and tidy. Any two free GPIO pins would work; these were the cleanest choice.</p></div>
+
+<div class="box careful"><div class="label">Be careful</div><p>Pins 27 and 28 (ID_SD and ID_SC) are reserved. Add-on boards called HATs carry a tiny memory chip that the Pi reads through these two pins at start-up to learn what is plugged in. Connecting anything else there can confuse the start-up. I never use them.</p></div>
+
+<h2>The three weak points</h2>
+<p>The Pi is a great computer, but three of its properties make it awkward for reading a scale. Each one decided a part of my design.</p>
+
+<h3>Weak point 1: no analog input</h3>
+<p>An analog signal is a voltage that can take any value, such as 1.2734 V. A digital pin only knows "high" or "low". To read an analog voltage, a computer needs an ADC (analog to digital converter), a circuit that measures a voltage and gives back a number. Arduino boards have ADCs built in. The Pi has none at all.</p>
+<p>A load cell gives a tiny analog voltage, a few thousandths of a volt. So the Pi cannot read it directly. The HX711 board is the answer: it amplifies the voltage and converts it into a 24-bit number, then sends that number to the Pi bit by bit over two digital wires. Chapter 3 explains the HX711 and chapter 12 shows the reading in detail.</p>
+
+<h3>Weak point 2: the pins work at 3.3 V</h3>
+<p>Every GPIO pin on the Pi uses 3.3 V for "high". A pin can be damaged if it sees more than 3.3 V, and the processor has no protection that saves it. The pins can also supply only small currents: about 16 mA from one pin and about 50 mA from all pins together is the safe limit. A milliamp (mA) is a thousandth of an amp.</p>
+<p>This is why I power the HX711 from the 3.3 V pin and not from 5 V. The HX711's DT pin sends data to the Pi, and its "high" voltage equals its own supply voltage. If the HX711 ran on 5 V, its DT pin would push 5 V into GPIO 5. Powered from 3.3 V, DT can never go above 3.3 V. The HX711 works fine at 3.3 V; its datasheet allows 2.6 V to 5.5 V.</p>
+<div class="box careful"><div class="label">Be careful</div><p>Never connect 5 V to any GPIO pin, even for a moment. Pins 2 and 4 carry 5 V and sit right next to pins 1 and 3. A jumper wire on the wrong pin can kill the processor. I always switch the Pi off before moving any wire, and I check each wire against the table before power-on.</p></div>
+
+<h3>Weak point 3: Linux timing is not exact</h3>
+<p>Because Linux shares the processor between many programs, my Python program can be paused at any moment, usually for less than a millisecond but sometimes for several milliseconds. Linux is not a real-time system. A real-time system guarantees that a task happens within a fixed time. Linux makes no such promise.</p>
+<p>For most of the kiosk this does not matter. A screen update 5 ms late is invisible. But the HX711 has a strict rule: if the clock pin SCK stays high for more than 60 microseconds (60 millionths of a second), the chip thinks it should power down and resets. If Linux pauses my program at the wrong moment during a reading, SCK stays high too long and that reading comes out wrong. Chapter 12 explains this "timing trap" and chapter 13 shows the median filter that removes the wrong readings.</p>
+
+<div class="box why"><div class="label">Why not just use a microcontroller for the scale, as in version 1?</div><p>A microcontroller has exact timing, so it never hits the trap. But it adds a second device, a second program to flash and a link between the two. In version 1 that link was Wi-Fi through a phone hotspot, and it was the weakest part of the demo. A wrong reading about once every 2 minutes is easy to remove in software. One device with a filter was simpler and more reliable than two devices with a link.</p></div>
+
+<h2>Power needs</h2>
+<p>The Pi 4 needs 5 V and up to 3 A through its USB-C socket. I used the official Raspberry Pi 5 V 3 A USB-C supply. Phone chargers often give less than 5 V under load, or use thin cables that lose voltage, and the Pi notices.</p>
+<p>When the supply voltage drops below about 4.63 V, the Pi shows a small lightning bolt symbol in the top right corner of the screen and slows its processor down to protect itself. This is called under-voltage. It can also cause the camera to disconnect or the SD card to be damaged. If I ever see the lightning symbol, I change the supply or the cable before looking for any other problem.</p>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>With the touchscreen, the webcam and the LED strip running, the whole kiosk drew about 1.1 A at 5 V, measured with a USB-C power meter. That is about 5.5 W, well inside the 3 A supply.</p></div>
+
+<h2>SSH and VNC</h2>
+<p>SSH (Secure Shell) lets me type commands on the Pi from my laptop over the network, as if I had a keyboard on the Pi. VNC (Virtual Network Computing) shows the Pi's desktop in a window on my laptop. I used SSH to copy files and restart the app, and VNC only during setup. The finished kiosk needs neither.</p>
+
+<h2>Why a Raspberry Pi and not something else</h2>
+<table>
+<thead><tr><th>Option</th><th>Good at</th><th>Why I did not choose it</th></tr></thead>
+<tbody>
+<tr><td>Arduino Uno</td><td>Exact timing, built-in ADC, cheap</td><td>2 kB of RAM. Cannot hold one 64 x 64 photo in float32 (49 kB), cannot run OpenCV, no USB camera, no touchscreen app.</td></tr>
+<tr><td>ESP32</td><td>Wi-Fi, exact timing, cheap, some camera boards exist</td><td>About 520 kB of RAM, no Linux, no NumPy or OpenCV. The CNN would need a rewrite in C, and the touchscreen bill would be hard.</td></tr>
+<tr><td>Laptop (version 1)</td><td>Very fast, easy to program</td><td>Expensive, large, needs a separate board for the scale (no GPIO pins), not something to leave inside a kiosk.</td></tr>
+<tr><td>Cloud server</td><td>Unlimited computing</td><td>Needs internet all the time, adds delay to every item, sends customer photos out of the shop, costs money every month.</td></tr>
+<tr><td>NVIDIA Jetson Nano</td><td>A GPU for fast neural networks</td><td>Costs more, uses more power, and needs CUDA. My network takes only 18 ms on the Pi's processor, so a GPU would be idle almost all the time.</td></tr>
+<tr><td><b>Raspberry Pi 4</b></td><td>Linux, Python, NumPy, OpenCV, USB camera, touchscreen, GPIO pins, small and cheap</td><td>Chosen. Its weak points (no ADC, 3.3 V, timing) are solved by the HX711 board and a software filter.</td></tr>
+</tbody>
+</table>
+
+<div class="box tip"><div class="label">Interview tip</div><p>If asked "why a Raspberry Pi?", I give the one-line answer first: "It is the smallest computer that runs Python, NumPy, OpenCV, a USB camera and a touchscreen, and it still has GPIO pins for the scale." Then I mention the cost of that choice: no analog input and inexact timing, which I solved with the HX711 and a median filter.</p></div>
+</section>
+<section class="chapter" id="ch3">
+<h1><span class="num">3</span> The other parts, and why each one</h1>
+<p class="small">Short version: around the Pi there is a USB webcam fixed 35 cm above the tray, an LED strip for even light, a 5 kg bar load cell under the tray, an HX711 board that turns the load cell's tiny voltage into a number, a 7-inch touchscreen, a 5 V 3 A supply, and the MDF frame from version 1. Every part is there for a reason, and most of the reasons are about making each photo and each weight look the same every time.</p>
+
+<h2>The camera: Logitech C270</h2>
+<p>The camera is a Logitech C270 USB webcam, the same one I used in version 1. It can record up to 1280 x 720, but I use it at 640 x 480. It has a fixed-focus lens, which means it cannot change focus, and it is sharp from about 30 cm to far away. It plugs into a USB port and Linux recognises it with no driver to install. OpenCV reads it as camera number 0.</p>
+<p>The camera is mounted 35 cm above the tray and looks straight down. From that height it sees an area of about 29 cm x 22 cm, so the whole 25 cm x 20 cm tray fits in the picture with a small margin.</p>
+
+<div class="box why"><div class="label">Why a fixed height and a straight-down view?</div><p>A classifier learns what things look like in its training photos. If the camera were at a different height each day, a tomato would appear bigger or smaller, and the network would see sizes it never learned. Looking straight down also means each item is seen from the same angle every time, with no perspective stretching. The version 1 photos were all taken from above, so keeping the same view let me reuse all 636 of them.</p></div>
+
+<div class="box why"><div class="label">Why 640 x 480 and not 1280 x 720?</div><p>The network only ever sees a 64 x 64 crop. A bigger frame would cost more time to capture and move around, and almost all of the extra detail would be thrown away by the resize. 640 x 480 gives each item a crop of roughly 100 to 250 pixels across, comfortably more than 64.</p></div>
+
+<h2>The light: a small LED strip</h2>
+<p>A 30 cm white LED strip is stuck under the camera arm, beside the camera, pointing down at the tray. It runs on 5 V from one of the Pi's USB ports. It is always on while the kiosk runs.</p>
+<p>Every webcam has automatic exposure. Exposure is how long and how strongly the sensor collects light for each picture. In a dim room the camera makes the picture brighter, which also adds grainy noise. In a bright room it does the opposite. Colours shift too: yellow room lights make a lemon look orange. With its own strong light close to the tray, the kiosk is lit mostly by the LED strip, whatever the room light is. The camera's exposure settles at almost the same setting every time.</p>
+<div class="box why"><div class="label">Why does steady light matter so much?</div><p>Colour is one of the strongest clues the network uses. Mosambi and Lemon differ mainly in size and shade of green-yellow. If the light changes, the shade changes, and the network's most useful clue becomes unreliable. A Rs 150 LED strip removed a large source of mistakes more cheaply than any change to the network.</p></div>
+
+<h2>The load cell: a bar that bends a tiny bit</h2>
+<p>A load cell is a sensor that turns force into an electrical signal. Mine is a bar-type load cell: a block of aluminium about 80 mm long and 12.7 mm square, with two holes at each end for screws and a hole cut through the middle. The hole makes the middle thin, so the bar bends in a controlled way when a load presses one end.</p>
+<p>It is rated for 5 kg. That means it gives its full signal at 5 kg and is safe up to about 150% of that before it can bend for good. The heaviest item in my list is a coconut at roughly 500 g to 700 g, so 5 kg leaves plenty of room for a bag of potatoes.</p>
+
+<h3>Strain gauges</h3>
+<p>Glued onto the thin part of the bar are four strain gauges. A strain gauge is a very thin zigzag of metal foil on a plastic film. When the bar bends, the foil on the stretched side gets longer and thinner, so its electrical resistance goes up slightly. Resistance is how strongly something resists the flow of electric current, measured in ohms. The foil on the squeezed side gets shorter and fatter, so its resistance goes down slightly.</p>
+<p>The changes are tiny. Each gauge is about 1,000 ohms, and the full 5 kg load changes it by only about 1 ohm. Measuring a 1-in-1,000 change directly would be hard. The Wheatstone bridge makes it easy.</p>
+
+<h3>The Wheatstone bridge in simple words</h3>
+<p>A Wheatstone bridge is four resistors joined in a diamond (a square standing on its corner). A supply voltage goes across the top and bottom corners. The output is the voltage difference between the left and right corners.</p>
+<p>When all four resistors are equal, the left and right corners sit at exactly half the supply voltage. Their difference is zero. When the bar bends, two gauges go up and two go down, arranged so that one side corner rises a little and the other falls a little. Now there is a small difference between them. The difference is proportional to the bending, and the bending is proportional to the weight.</p>
+<p>The analogy I use is a see-saw with two children of equal weight. It sits level. Put a coin on one end and it tips slightly. The bridge does not measure the big weight of the children (the supply voltage), only the small tip caused by the coin (the load). That is why it can sense a 1-in-1,000 change.</p>
+<p>My load cell has a rated output of 1 mV per volt. With about 3 V across the bridge, the full 5 kg gives about 3 mV (3 thousandths of a volt). A 412 g tomato gives about 0.25 mV. That is the size of signal the HX711 has to measure.</p>
+
+<figure>
+<svg width="700" height="300" viewBox="0 0 700 300" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<defs><marker id="a31" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#d9822b"/></marker></defs>
+<text x="160" y="22" text-anchor="middle" fill="#1c2b33">The bar, seen from the side</text>
+<rect x="20" y="100" width="280" height="44" fill="#e9f3f6" stroke="#5b7083" stroke-width="2"/>
+<rect x="125" y="111" width="70" height="22" rx="11" fill="#ffffff" stroke="#5b7083"/>
+<rect x="20" y="144" width="70" height="20" fill="#5b7083"/><text x="55" y="182" text-anchor="middle" fill="#5b7083" font-size="11">fixed to base</text>
+<rect x="230" y="80" width="70" height="20" fill="#5b7083"/><text x="265" y="72" text-anchor="middle" fill="#5b7083" font-size="11">tray spacer</text>
+<line x1="265" y1="35" x2="265" y2="58" stroke="#d9822b" stroke-width="3" marker-end="url(#a31)"/><text x="265" y="30" text-anchor="middle" fill="#d9822b">load</text>
+<rect x="128" y="94" width="20" height="6" fill="#d9822b"/><rect x="172" y="94" width="20" height="6" fill="#d9822b"/>
+<rect x="128" y="144" width="20" height="6" fill="#d9822b"/><rect x="172" y="144" width="20" height="6" fill="#d9822b"/>
+<text x="160" y="88" text-anchor="middle" fill="#1c2b33" font-size="11">gauges on top</text>
+<text x="160" y="166" text-anchor="middle" fill="#1c2b33" font-size="11">gauges underneath</text>
+<text x="160" y="210" text-anchor="middle" fill="#5b7083" font-size="11">The middle hole makes a thin part that bends.</text>
+<text x="160" y="226" text-anchor="middle" fill="#5b7083" font-size="11">Two gauges stretch (R up), two squeeze (R down).</text>
+<text x="520" y="22" text-anchor="middle" fill="#1c2b33">The four gauges as a bridge</text>
+<polygon points="520,50 600,130 520,210 440,130" fill="none" stroke="#0f7c8c" stroke-width="2"/>
+<rect x="465" y="78" width="26" height="14" fill="#fdf0e2" stroke="#d9822b" transform="rotate(-45 478 85)"/>
+<rect x="549" y="78" width="26" height="14" fill="#fdf0e2" stroke="#d9822b" transform="rotate(45 562 85)"/>
+<rect x="465" y="168" width="26" height="14" fill="#fdf0e2" stroke="#d9822b" transform="rotate(45 478 175)"/>
+<rect x="549" y="168" width="26" height="14" fill="#fdf0e2" stroke="#d9822b" transform="rotate(-45 562 175)"/>
+<circle cx="520" cy="50" r="4" fill="#1c2b33"/><circle cx="520" cy="210" r="4" fill="#1c2b33"/><circle cx="440" cy="130" r="4" fill="#1c2b33"/><circle cx="600" cy="130" r="4" fill="#1c2b33"/>
+<text x="520" y="42" text-anchor="middle" fill="#1c2b33" font-size="11">E+ red (about 3 V)</text>
+<text x="520" y="228" text-anchor="middle" fill="#1c2b33" font-size="11">E- black (0 V)</text>
+<text x="432" y="134" text-anchor="end" fill="#1c2b33" font-size="11">A- white</text>
+<text x="608" y="134" text-anchor="start" fill="#1c2b33" font-size="11">A+ green</text>
+<text x="520" y="134" text-anchor="middle" fill="#5b7083" font-size="11">output =</text>
+<text x="520" y="150" text-anchor="middle" fill="#5b7083" font-size="11">A+ minus A-</text>
+<text x="520" y="260" text-anchor="middle" fill="#1c2b33" font-size="11">Empty: A+ and A- both at half the supply, difference near 0.</text>
+<text x="520" y="276" text-anchor="middle" fill="#1c2b33" font-size="11">412 g tomato: difference about 0.25 mV. Full 5 kg: about 3 mV.</text>
+</svg>
+<figcaption>Figure 3.1. Inside the load cell. Left: the aluminium bar bends at its thin middle when the tray pushes one end down, stretching two strain gauges and squeezing two. Right: the four gauges form a Wheatstone bridge. The HX711 supplies E+ and E- and measures the tiny difference between A+ and A-.</figcaption>
+</figure>
+
+<div class="box careful"><div class="label">Be careful</div><p>Each bar load cell has an arrow on its side showing the direction the force must push. If it is mounted upside down, the weight still changes the reading but in the wrong direction, so adding an item makes the number go down. I also never press the free end hard with my hand; a sudden push above the rated load can bend the bar for good.</p></div>
+
+<h2>The HX711 board: amplifier and converter</h2>
+<p>The HX711 is a chip made for load cells. I use it on a small green breakout board, a little circuit board that puts the chip and its few support parts on easy pins. The board has four pins on one side for the Pi (VCC, GND, DT, SCK) and six on the other side for load cells (E+, E-, A-, A+, B-, B+). I use only channel A.</p>
+<p>The chip does three jobs.</p>
+<ol>
+<li>It supplies the bridge. The E+ and E- pins put a steady voltage across the load cell, about 3 V when the board runs from the Pi's 3.3 V pin.</li>
+<li>It amplifies. An amplifier makes a small voltage bigger. With gain 128, the 0.25 mV from a tomato becomes about 32 mV. Gain is the "times" number of the amplifier.</li>
+<li>It converts. Its ADC (analog to digital converter) measures the amplified voltage and gives a 24-bit number. 24 bits means 2<sup>24</sup> = 16,777,216 possible values, from -8,388,608 to +8,388,607. This is very fine: one step is a few billionths of a volt at the input.</li>
+</ol>
+<p>The chip then sends the number to the Pi one bit at a time over two wires. DT (data) is the wire the HX711 uses to send bits. SCK (serial clock) is the wire the Pi pulses to ask for each bit. Chapter 12 shows exactly how one reading works.</p>
+
+<figure>
+<svg width="700" height="210" viewBox="0 0 700 210" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<defs><marker id="a32" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1c2b33"/></marker></defs>
+<rect x="10" y="60" width="110" height="60" rx="6" fill="#e9f3f6" stroke="#5b7083"/><text x="65" y="85" text-anchor="middle" fill="#1c2b33">Load cell</text><text x="65" y="103" text-anchor="middle" fill="#5b7083" font-size="11">0.25 mV</text>
+<rect x="175" y="30" width="350" height="120" rx="8" fill="none" stroke="#0f7c8c" stroke-width="2"/><text x="350" y="22" text-anchor="middle" fill="#0f7c8c" font-weight="bold">HX711 chip</text>
+<polygon points="195,60 195,120 265,90" fill="#fdf0e2" stroke="#d9822b"/><text x="222" y="95" text-anchor="middle" fill="#1c2b33" font-size="11">x128</text>
+<text x="230" y="140" text-anchor="middle" fill="#5b7083" font-size="11">amplifier</text>
+<rect x="300" y="65" width="90" height="50" rx="4" fill="#e9f3f6" stroke="#0f7c8c"/><text x="345" y="88" text-anchor="middle" fill="#1c2b33">24-bit</text><text x="345" y="104" text-anchor="middle" fill="#1c2b33">ADC</text>
+<rect x="420" y="65" width="90" height="50" rx="4" fill="#e9f3f6" stroke="#0f7c8c"/><text x="465" y="88" text-anchor="middle" fill="#1c2b33">serial</text><text x="465" y="104" text-anchor="middle" fill="#1c2b33">output</text>
+<line x1="120" y1="90" x2="193" y2="90" stroke="#1c2b33" marker-end="url(#a32)"/>
+<line x1="265" y1="90" x2="298" y2="90" stroke="#1c2b33" marker-end="url(#a32)"/><text x="282" y="80" text-anchor="middle" fill="#5b7083" font-size="11">32 mV</text>
+<line x1="390" y1="90" x2="418" y2="90" stroke="#1c2b33" marker-end="url(#a32)"/>
+<line x1="510" y1="80" x2="590" y2="80" stroke="#d9822b" stroke-width="3" marker-end="url(#a32)"/><text x="550" y="72" text-anchor="middle" fill="#d9822b" font-size="11">DT (bits out)</text>
+<line x1="590" y1="102" x2="512" y2="102" stroke="#d9822b" stroke-width="3" marker-end="url(#a32)"/><text x="550" y="120" text-anchor="middle" fill="#d9822b" font-size="11">SCK (pulses in)</text>
+<rect x="592" y="60" width="98" height="60" rx="6" fill="#e9f3f6" stroke="#5b7083"/><text x="641" y="85" text-anchor="middle" fill="#1c2b33">Raspberry Pi</text><text x="641" y="103" text-anchor="middle" fill="#5b7083" font-size="11">GPIO 5 and 6</text>
+<text x="350" y="182" text-anchor="middle" fill="#1c2b33">tiny voltage  -&gt;  bigger voltage  -&gt;  a number such as 301,022  -&gt;  24 bits over 2 wires</text>
+<text x="350" y="200" text-anchor="middle" fill="#5b7083" font-size="11">(301,022 = empty-tray offset 123,450 + 412 g x 431 counts per gram, from chapter 13)</text>
+</svg>
+<figcaption>Figure 3.2. What the HX711 does. It multiplies the load cell's fraction of a millivolt by 128, measures the result as a 24-bit number, and sends that number to the Pi over two digital wires, DT and SCK. The Pi never touches an analog voltage.</figcaption>
+</figure>
+
+<div class="box why"><div class="label">Why does the HX711 exist at all?</div><p>The Pi has no ADC, and even boards that do have one (such as an Arduino with its 10-bit ADC over 0 to 5 V, about 5 mV per step) could not see a 0.25 mV signal at all. The load cell needs a big gain and a very fine converter, both tuned for slow, steady signals. The HX711 does exactly that for about Rs 60, and it needs only two digital pins. That is why almost every hobby scale uses it.</p></div>
+
+<p>The HX711 can make 10 or 80 readings per second, chosen by a pin on the board called RATE. My board came with RATE tied low, giving 10 readings per second, and I left it that way. Slower readings are less noisy because the chip averages over a longer time inside. 10 per second is also exactly the speed of my app's tick, so each tick gets one new reading.</p>
+
+<h2>The touchscreen</h2>
+<p>The screen is the official Raspberry Pi 7-inch touch display. It shows 800 x 480 pixels and has a capacitive touch layer. Capacitive means it senses the small electric charge of a finger, like a phone screen, so a light tap works and no pen is needed. It connects with a flat DSI ribbon cable and takes its power from two jumper wires on the Pi's 5 V and GND pins.</p>
+<div class="box why"><div class="label">Why a touchscreen, and why 7 inches?</div><p>A kiosk has no keyboard or mouse. Customers expect to tap, as on a phone. Version 1 had a laptop screen and needed a mouse, which nobody wants in a shop. The 7-inch size is big enough for buttons about 2 cm tall and a bill with six or seven lines in a font readable at arm's length. The official screen also needs no driver on Raspberry Pi OS and leaves the HDMI ports and USB ports free.</p></div>
+
+<h2>The power supply</h2>
+<p>The official Raspberry Pi 5 V 3 A USB-C supply powers everything: the Pi, the screen through the 5 V pin, the camera and the LED strip through the USB ports, and the HX711 through the 3.3 V pin. One plug for the whole kiosk was a goal from the start.</p>
+
+<h2>The frame and the tray</h2>
+<p>The frame is the MDF box from version 1. MDF (medium-density fibreboard) is a cheap, flat, easy-to-cut wooden board. A vertical post at the back holds the camera arm. The blue plastic tray rests only on the load cell, through a spacer, and touches nothing else. Chapter 16 gives the dimensions.</p>
+<div class="box why"><div class="label">Why a blue tray?</div><p>No item in my list is blue. A blue background gives strong colour contrast with every fruit and vegetable, so the item stands out clearly in each photo. It also made the version 1 bounding boxes easy to draw, which helped the crops I cut for version 2.</p></div>
+
+<h2>The parts list</h2>
+<p>Prices are what I paid in 2025, rounded, in Indian rupees. Parts marked "reused" came from version 1.</p>
+<table>
+<thead><tr><th>Part</th><th>Exact item</th><th>Rs</th><th>Where from</th></tr></thead>
+<tbody>
+<tr><td>Computer</td><td>Raspberry Pi 4 Model B, 4 GB</td><td>5,800</td><td>online electronics store</td></tr>
+<tr><td>Power supply</td><td>Official Raspberry Pi 5 V 3 A USB-C</td><td>800</td><td>online electronics store</td></tr>
+<tr><td>Storage</td><td>32 GB micro-SD card, class 10, A1</td><td>450</td><td>local electronics shop</td></tr>
+<tr><td>Screen</td><td>Official Raspberry Pi 7-inch touch display</td><td>6,200</td><td>online electronics store</td></tr>
+<tr><td>Cooling</td><td>Stick-on heat sink set for the Pi 4</td><td>150</td><td>online electronics store</td></tr>
+<tr><td>Camera</td><td>Logitech C270 USB webcam</td><td>1,700</td><td>reused</td></tr>
+<tr><td>Load cell + HX711</td><td>5 kg bar load cell with green HX711 board</td><td>250</td><td>reused</td></tr>
+<tr><td>Light</td><td>30 cm 5 V USB white LED strip</td><td>150</td><td>local electronics shop</td></tr>
+<tr><td>Wires</td><td>Female-to-female jumper wires, 20 cm</td><td>100</td><td>local electronics shop</td></tr>
+<tr><td>Fixings</td><td>M4 and M5 screws, nylon spacers, brass standoffs</td><td>150</td><td>local hardware shop</td></tr>
+<tr><td>Frame and tray</td><td>MDF box with camera post, blue plastic tray</td><td>600</td><td>reused</td></tr>
+<tr><td colspan="2"><b>Total</b> (new parts Rs 13,800)</td><td><b>16,350</b></td><td></td></tr>
+</tbody>
+</table>
+<div class="box tip"><div class="label">Interview tip</div><p>If asked about cost, I say: "About Rs 16,000 in parts, and almost half of that is the official touchscreen. The parts that do the sensing, the load cell, the HX711 and the webcam, cost under Rs 2,000 together." It shows I know where the money goes.</p></div>
+
+<div class="box story"><div class="label">Design story</div><p>In version 1 the parts list also had an ESP8266 NodeMCU board and needed a laptop and a phone hotspot. Moving to the Pi removed the ESP8266 from the list and the laptop from the counter. The camera, load cell, HX711, frame and tray all carried over unchanged, which is also why the version 1 photos still match what the version 2 camera sees.</p></div>
+</section>
+<section class="chapter" id="ch4">
+<h1><span class="num">4</span> Wiring, exactly</h1>
+<p class="small">Short version: the kiosk has ten wires I connected by hand. Four go from the load cell to the HX711 board, four go from the HX711 board to the Pi (3.3 V, ground, GPIO 5, GPIO 6), and two give the screen its 5 V power. The camera and the light just plug into USB. Most of this chapter is about the rules behind those wires.</p>
+
+<h2>The complete connection table</h2>
+<p>This table is the whole wiring of the kiosk. I keep a printed copy taped inside the frame, and the same table is in <code>docs/wiring.md</code> in the repository.</p>
+<table>
+<thead><tr><th>From</th><th>To</th><th>Wire</th><th>Carries</th></tr></thead>
+<tbody>
+<tr><td>Load cell red</td><td>HX711 E+</td><td>load cell lead</td><td>bridge supply, about 3 V</td></tr>
+<tr><td>Load cell black</td><td>HX711 E-</td><td>load cell lead</td><td>bridge ground</td></tr>
+<tr><td>Load cell white</td><td>HX711 A-</td><td>load cell lead</td><td>signal minus</td></tr>
+<tr><td>Load cell green</td><td>HX711 A+</td><td>load cell lead</td><td>signal plus</td></tr>
+<tr><td>HX711 VCC</td><td>Pi pin 1 (3V3)</td><td>red jumper</td><td>3.3 V power for the HX711</td></tr>
+<tr><td>HX711 GND</td><td>Pi pin 6 (GND)</td><td>black jumper</td><td>common ground</td></tr>
+<tr><td>HX711 DT</td><td>Pi pin 29 (GPIO 5)</td><td>yellow jumper</td><td>data bits, HX711 to Pi</td></tr>
+<tr><td>HX711 SCK</td><td>Pi pin 31 (GPIO 6)</td><td>blue jumper</td><td>clock pulses, Pi to HX711</td></tr>
+<tr><td>Screen 5V</td><td>Pi pin 2 (5V)</td><td>red jumper (comes with the screen)</td><td>screen power</td></tr>
+<tr><td>Screen GND</td><td>Pi pin 9 (GND)</td><td>black jumper (comes with the screen)</td><td>screen ground</td></tr>
+<tr><td>Screen DSI</td><td>Pi DSI connector</td><td>flat ribbon</td><td>picture and touch</td></tr>
+<tr><td>Webcam</td><td>Pi USB 2.0 port (black)</td><td>USB cable</td><td>photos</td></tr>
+<tr><td>LED strip</td><td>Pi USB 2.0 port (black)</td><td>USB cable</td><td>5 V for the light</td></tr>
+<tr><td>Power supply</td><td>Pi USB-C</td><td>USB-C cable</td><td>5 V 3 A for everything</td></tr>
+</tbody>
+</table>
+
+<div class="box why"><div class="label">Why screen ground on pin 9 and not pin 6?</div><p>The screen's two jumpers are usually put on pins 2 and 6, which sit side by side. In my kiosk pin 6 already holds the HX711 ground, and one pin can only take one jumper socket. All ground pins on the header are joined together on the board, so any ground pin is electrically the same. I used pin 9, the nearest free ground.</p></div>
+
+<p>I used colour on purpose: red for power, black for ground, yellow for data, blue for clock. When I look into the box, I can check the wiring by colour alone. The webcam and the LED strip go into the black USB 2.0 ports because neither needs USB 3.0 speed, which keeps the faster blue ports free.</p>
+
+<figure>
+<svg width="700" height="340" viewBox="0 0 700 340" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<rect x="20" y="110" width="140" height="44" rx="4" fill="#e9f3f6" stroke="#5b7083" stroke-width="2"/>
+<text x="90" y="137" text-anchor="middle" fill="#1c2b33">5 kg load cell</text>
+<rect x="240" y="60" width="170" height="200" rx="6" fill="#e9f3f6" stroke="#0f7c8c" stroke-width="2"/>
+<text x="325" y="52" text-anchor="middle" fill="#0f7c8c" font-weight="bold">HX711 board</text>
+<text x="252" y="100" fill="#1c2b33" font-size="12">E+</text><text x="252" y="130" fill="#1c2b33" font-size="12">E-</text><text x="252" y="160" fill="#1c2b33" font-size="12">A-</text><text x="252" y="190" fill="#1c2b33" font-size="12">A+</text>
+<text x="398" y="100" text-anchor="end" fill="#1c2b33" font-size="12">VCC</text><text x="398" y="130" text-anchor="end" fill="#1c2b33" font-size="12">GND</text><text x="398" y="160" text-anchor="end" fill="#1c2b33" font-size="12">DT</text><text x="398" y="190" text-anchor="end" fill="#1c2b33" font-size="12">SCK</text>
+<path d="M160,118 C200,118 200,96 240,96" fill="none" stroke="#c0392b" stroke-width="3"/>
+<path d="M160,126 C200,126 200,126 240,126" fill="none" stroke="#1c2b33" stroke-width="3"/>
+<path d="M160,138 C200,138 200,156 240,156" fill="none" stroke="#9aa5ab" stroke-width="3"/>
+<path d="M160,146 C200,146 200,186 240,186" fill="none" stroke="#2f8f4e" stroke-width="3"/>
+<text x="170" y="210" fill="#5b7083" font-size="11">red, black,</text><text x="170" y="224" fill="#5b7083" font-size="11">white, green</text>
+<rect x="510" y="40" width="170" height="260" rx="6" fill="#e9f3f6" stroke="#5b7083" stroke-width="2"/>
+<text x="595" y="32" text-anchor="middle" fill="#1c2b33" font-weight="bold">Raspberry Pi 4 header</text>
+<text x="522" y="100" fill="#1c2b33" font-size="12">pin 1  3V3</text><text x="522" y="130" fill="#1c2b33" font-size="12">pin 6  GND</text><text x="522" y="160" fill="#1c2b33" font-size="12">pin 29 GPIO 5</text><text x="522" y="190" fill="#1c2b33" font-size="12">pin 31 GPIO 6</text><text x="522" y="230" fill="#1c2b33" font-size="12">pin 2  5V</text><text x="522" y="260" fill="#1c2b33" font-size="12">pin 9  GND</text>
+<text x="522" y="62" fill="#5b7083" font-size="11">DSI ribbon to screen</text><text x="522" y="78" fill="#5b7083" font-size="11">USB: webcam, LED strip</text>
+<line x1="410" y1="96" x2="510" y2="96" stroke="#c0392b" stroke-width="3"/>
+<line x1="410" y1="126" x2="510" y2="126" stroke="#1c2b33" stroke-width="3"/>
+<line x1="410" y1="156" x2="510" y2="156" stroke="#d9a400" stroke-width="3"/>
+<line x1="410" y1="186" x2="510" y2="186" stroke="#2a6fdb" stroke-width="3"/>
+<text x="460" y="88" text-anchor="middle" fill="#5b7083" font-size="10">3.3 V</text>
+<text x="460" y="150" text-anchor="middle" fill="#5b7083" font-size="10">data</text>
+<text x="460" y="180" text-anchor="middle" fill="#5b7083" font-size="10">clock</text>
+<rect x="250" y="285" width="150" height="44" rx="4" fill="#e9f3f6" stroke="#5b7083"/><text x="325" y="311" text-anchor="middle" fill="#1c2b33">7-inch touchscreen</text>
+<path d="M400,296 C460,296 460,226 510,226" fill="none" stroke="#c0392b" stroke-width="3"/>
+<path d="M400,316 C480,316 470,256 510,256" fill="none" stroke="#1c2b33" stroke-width="3"/>
+<text x="20" y="300" fill="#5b7083" font-size="11">All grounds meet inside the Pi,</text><text x="20" y="315" fill="#5b7083" font-size="11">so the HX711, the screen and the Pi</text><text x="20" y="330" fill="#5b7083" font-size="11">share one 0 V reference.</text>
+</svg>
+<figcaption>Figure 4.1. The kiosk's hand-made wiring. Load cell to HX711 on the left, HX711 to the Pi in the middle (red 3.3 V, black ground, yellow data on GPIO 5, blue clock on GPIO 6), and the screen's two power wires at the bottom. The DSI ribbon and the USB devices are not drawn as wires because they simply plug in.</figcaption>
+</figure>
+
+<h2>The wiring rules, and why each one</h2>
+
+<h3>Rule 1: the HX711 runs on 3.3 V, not 5 V</h3>
+<p>Many HX711 guides online connect VCC to 5 V, because they are written for an Arduino, whose pins work at 5 V. On a Pi that would be a mistake. The HX711's DT output swings between 0 V and its own supply voltage. Powered from 5 V, it would push 5 V into GPIO 5, which is built for at most 3.3 V. It might survive for a while and then fail.</p>
+<p>Powered from pin 1 (3.3 V), the HX711's DT pin can never exceed 3.3 V. The bridge voltage also drops from about 4.3 V to about 3 V, so the signal is a little smaller. The HX711 still has more than enough resolution, as chapter 13's 431 counts per gram shows.</p>
+<div class="box why"><div class="label">Why not use a level shifter instead?</div><p>A level shifter is a small board that converts 5 V signals to 3.3 V and back. It would let the HX711 run at 5 V with a slightly bigger signal. But it is one more board, four more wires and one more thing to go wrong. Running the HX711 at 3.3 V solves the problem with zero extra parts and costs only a small amount of signal I did not need.</p></div>
+
+<h3>Rule 2: short wires</h3>
+<p>The four wires between the HX711 and the Pi are 20 cm jumpers, and the HX711 board is screwed to the base right below the Pi. The load cell's own leads are about 25 cm and go straight to the HX711. Long wires act like aerials: they pick up electrical noise from the power supply, the screen and the room. The load cell signal is a fraction of a millivolt, so even a little pickup shows as a jumpy reading. Keeping the analog part (load cell to HX711) short matters most, because after the HX711 the signal is digital and much harder to disturb.</p>
+
+<h3>Rule 3: the tray touches nothing but the load cell</h3>
+<p>The tray's whole weight must pass through the load cell. If the tray rubs against the frame, a cable, or the edge of the box, part of the weight goes into the frame instead. The scale then reads too little, and the error changes every time the tray shifts. I left a gap of at least 5 mm all around the tray and made sure no wire hangs on it.</p>
+
+<h3>Rule 4: centre the tray on the load cell</h3>
+<p>A bar load cell is most accurate when the load sits above its free end, in line with the bar. The tray is fixed to the cell with a spacer at its centre. An item placed at the edge of a 25 cm tray still twists the bar a little, so the reading changes slightly with position. Chapter 13 measures this off-centre error. Keeping the tray centred and not too big kept it small.</p>
+
+<figure>
+<svg width="700" height="230" viewBox="0 0 700 230" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<defs><marker id="a42" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#d9822b"/></marker></defs>
+<rect x="60" y="190" width="580" height="18" fill="#5b7083"/><text x="350" y="224" text-anchor="middle" fill="#5b7083" font-size="11">MDF base</text>
+<rect x="180" y="165" width="60" height="25" fill="#9aa5ab"/><text x="210" y="182" text-anchor="middle" fill="#ffffff" font-size="11">spacer</text>
+<rect x="180" y="135" width="290" height="30" fill="#e9f3f6" stroke="#0f7c8c" stroke-width="2"/>
+<rect x="290" y="143" width="70" height="14" rx="7" fill="#ffffff" stroke="#0f7c8c"/><text x="325" y="128" text-anchor="middle" fill="#0f7c8c" font-size="11">load cell bar</text>
+<rect x="400" y="110" width="60" height="25" fill="#9aa5ab"/><text x="430" y="127" text-anchor="middle" fill="#ffffff" font-size="11">spacer</text>
+<rect x="176" y="96" width="484" height="14" fill="#2a6fdb" opacity="0.85"/>
+<text x="430" y="90" text-anchor="middle" fill="#1c2b33">blue tray, 25 cm wide, centred over the free end</text>
+<line x1="430" y1="40" x2="430" y2="70" stroke="#d9822b" stroke-width="3" marker-end="url(#a42)"/><text x="430" y="34" text-anchor="middle" fill="#d9822b">item weight</text>
+<rect x="148" y="60" width="16" height="130" fill="#5b7083"/><text x="156" y="52" text-anchor="middle" fill="#5b7083" font-size="11">frame wall</text>
+<line x1="164" y1="103" x2="176" y2="103" stroke="#d9822b" stroke-width="2"/><text x="110" y="92" text-anchor="middle" fill="#d9822b" font-size="10">5 mm+ gap</text><line x1="130" y1="94" x2="168" y2="102" stroke="#d9822b"/>
+<text x="690" y="40" text-anchor="end" fill="#1c2b33" font-size="11">The only path from tray</text><text x="690" y="55" text-anchor="end" fill="#1c2b33" font-size="11">to base is through the bar.</text>
+</svg>
+<figcaption>Figure 4.2. Side view of the scale. One end of the load cell is screwed to the base through a spacer; the other end carries the tray through a second spacer. The spacers leave room for the bar to bend. The tray is centred above the free end and keeps a gap from the frame on every side.</figcaption>
+</figure>
+
+<h3>Rule 5: a common ground</h3>
+<p>Ground is the 0 V reference that every voltage is measured from. When the HX711 sends a "high" bit at 3.3 V, the Pi can only understand it if both agree on where 0 V is. That is why the HX711's GND wire goes to a Pi ground pin, even though the HX711 also gets its power from the Pi. The screen's ground goes to the Pi too. Because everything is powered from the one supply through the Pi, there is exactly one ground in the kiosk, which avoids small currents flowing through the signal wires.</p>
+
+<div class="box careful"><div class="label">Be careful</div><p>Jumper wires on header pins are easy to knock loose and easy to put one pin over. After every change I count the pins from pin 1 with a fingertip, and I check that no two jumper sockets are touching. A loose ground on the HX711 makes the readings jump wildly, which looks like a software bug but is not.</p></div>
+
+<h2>Load cell wire colours, and the "weight goes down" swap</h2>
+<p>My load cell uses the most common colour code: red E+, black E-, white A-, green A+. Some load cells use different colours. If the colours on a cell are not documented, I measure resistance with a multimeter: the two excitation wires and the two signal wires each show about 1,000 ohms across them, and across one excitation and one signal wire it shows about 750 ohms.</p>
+<p>If the wires are right but the reading goes <i>down</i> when I add weight, the signal pair is the wrong way round, or the cell is mounted with its arrow upside down. The fix is to swap the white and green wires at the HX711 (A- and A+). This flips the sign of the signal. The bridge supply wires (red and black) stay as they are.</p>
+<div class="box why"><div class="label">Why fix the sign in the wiring and not in the code?</div><p>The code could simply use a negative counts-per-gram number. But then every raw number in my notes and logs would go the "wrong" way, and anyone reading the readings later would be confused. Swapping two wires once makes raw counts rise with weight, which matches every explanation in this book.</p></div>
+
+<h2>First power-on checklist</h2>
+<p>Before the first power-on, and after any change to the wiring, I go through this list with the power unplugged.</p>
+<table>
+<thead><tr><th>#</th><th>Check</th><th>Why</th></tr></thead>
+<tbody>
+<tr><td>1</td><td>HX711 VCC is on pin 1 (3V3), not pin 2 or 4 (5V)</td><td>5 V on the HX711 means 5 V on GPIO 5</td></tr>
+<tr><td>2</td><td>HX711 GND is on pin 6; screen GND is on pin 9</td><td>Both need a ground; one jumper per pin</td></tr>
+<tr><td>3</td><td>DT on pin 29 (GPIO 5), SCK on pin 31 (GPIO 6), not swapped</td><td>Swapped wires give a timeout, not a damage, but waste time</td></tr>
+<tr><td>4</td><td>Nothing on pins 27 and 28</td><td>Reserved for HAT identification</td></tr>
+<tr><td>5</td><td>Load cell colours match E+, E-, A-, A+ at the HX711</td><td>Wrong pair means no signal or a backwards signal</td></tr>
+<tr><td>6</td><td>Screen jumpers on pins 2 (5V) and 9 (GND)</td><td>The screen will not light without them</td></tr>
+<tr><td>7</td><td>DSI ribbon fully in, contacts facing the right way, latches closed</td><td>A half-inserted ribbon gives a black screen</td></tr>
+<tr><td>8</td><td>The tray moves freely and touches nothing but the spacer</td><td>Rubbing steals weight</td></tr>
+<tr><td>9</td><td>No bare wire ends or metal screws touching the Pi board</td><td>Short circuits</td></tr>
+<tr><td>10</td><td>Official 5 V 3 A supply plugged in last</td><td>Avoids under-voltage and the lightning symbol</td></tr>
+</tbody>
+</table>
+<p>At the first power-on I watch for three things. The Pi's red LED should be steadily on (power is fine) and the green LED should flicker (it is reading the SD card). The screen should show the boot messages. The HX711 board's small red LED, if it has one, should light. If anything gets hot to the touch within a minute, I pull the plug and recheck the list.</p>
+
+<div class="box tip"><div class="label">Interview tip</div><p>Wiring questions are often a quick test of care. My short answer is: "Four wires to the Pi: VCC to 3.3 V on pin 1, ground to pin 6, DT to GPIO 5 on pin 29, SCK to GPIO 6 on pin 31. I power the HX711 from 3.3 V so its data line can never put 5 V into a Pi pin." The last sentence is the one that shows I understood the Pi, not just copied a diagram.</p></div>
+
+<div class="box story"><div class="label">Design story</div><p>In version 1 the HX711 was wired to an ESP8266 (DT on GPIO 4, SCK on GPIO 5), and the ESP8266 sent the weight over Wi-Fi to the laptop. In version 2 the same HX711 board connects straight to the Pi's header. The number of wires from the scale to the computer dropped from "four wires, one microcontroller, one Wi-Fi link and one hotspot" to just four wires.</p></div>
+</section>
+<section class="chapter" id="ch5">
+<h1><span class="num">5</span> Software setup</h1>
+<p class="small">Short version: the kiosk uses two machines. My laptop trains the CNN and keeps the photos. The Pi runs Raspberry Pi OS Bookworm 64-bit with four packages from apt (NumPy, OpenCV, Tkinter and rpi-lgpio) and runs the kiosk app. Only one file, weights.npz, moves from the laptop to the Pi. A small systemd service starts the app at every boot.</p>
+
+<h2>Two machines, two jobs</h2>
+<p>Training a network means showing it every training crop 40 times and adjusting 80,604 weights after every batch of 32 crops. That is millions of small calculations, repeated for half an hour. Running the trained network on one photo is a tiny job by comparison. So I split the work: the laptop trains, the Pi predicts.</p>
+<p>The laptop keeps the 636 original photos, the cropped dataset and the training code. When training finishes it writes one file, <code>weights.npz</code>, about 320 kB. That file is the only thing the Pi needs from the training side. The Pi has the same layer code (<code>cnn_numpy.py</code>), loads the file, and is ready to predict.</p>
+
+<figure>
+<svg width="700" height="290" viewBox="0 0 700 290" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<defs><marker id="a51" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#d9822b"/></marker></defs>
+<rect x="20" y="30" width="270" height="210" rx="10" fill="#e9f3f6" stroke="#5b7083" stroke-width="2"/>
+<text x="155" y="22" text-anchor="middle" fill="#1c2b33" font-weight="bold">Laptop (training)</text>
+<text x="35" y="58" fill="#1c2b33">636 photos + YOLO labels</text>
+<text x="35" y="82" fill="#1c2b33">prepare_dataset.py -&gt; 1,850 crops</text>
+<text x="35" y="106" fill="#1c2b33">gradient_check.py</text>
+<text x="35" y="130" fill="#1c2b33">train.py (about 30 min)</text>
+<text x="35" y="154" fill="#1c2b33">cnn_numpy.py</text>
+<rect x="35" y="168" width="130" height="30" rx="4" fill="#fdf0e2" stroke="#d9822b"/><text x="100" y="188" text-anchor="middle" fill="#1c2b33">weights.npz</text>
+<text x="35" y="226" fill="#5b7083" font-size="11">numpy, opencv-python, matplotlib</text>
+<rect x="410" y="30" width="270" height="210" rx="10" fill="#e9f3f6" stroke="#0f7c8c" stroke-width="2"/>
+<text x="545" y="22" text-anchor="middle" fill="#1c2b33" font-weight="bold">Raspberry Pi 4 (kiosk)</text>
+<text x="425" y="58" fill="#1c2b33">cnn_numpy.py (same file)</text>
+<rect x="425" y="70" width="130" height="30" rx="4" fill="#fdf0e2" stroke="#d9822b"/><text x="490" y="90" text-anchor="middle" fill="#1c2b33">weights.npz</text>
+<text x="425" y="124" fill="#1c2b33">kiosk_app.py, hx711.py, ...</text>
+<text x="425" y="148" fill="#1c2b33">prices.csv, config.json</text>
+<text x="425" y="172" fill="#1c2b33">calibrate.py (once)</text>
+<text x="425" y="196" fill="#1c2b33">kiosk.service (autostart)</text>
+<text x="425" y="226" fill="#5b7083" font-size="11">python3-numpy, -opencv, -tk, -rpi-lgpio</text>
+<path d="M165,183 C300,183 300,85 423,85" fill="none" stroke="#d9822b" stroke-width="3" marker-end="url(#a51)"/>
+<text x="350" y="170" text-anchor="middle" fill="#d9822b">scp, 320 kB</text>
+<text x="350" y="188" text-anchor="middle" fill="#d9822b" font-size="11">the only file</text><text x="350" y="202" text-anchor="middle" fill="#d9822b" font-size="11">that moves</text>
+<text x="350" y="264" text-anchor="middle" fill="#5b7083" font-size="11">Code reaches both machines with git pull. Photos never leave the laptop.</text>
+</svg>
+<figcaption>Figure 5.1. The two machines. The laptop holds the photos and does the heavy training. The Pi holds the same layer code plus the kiosk code. After training, only the 320 kB weights file is copied across. The source code reaches both machines through the same Git repository.</figcaption>
+</figure>
+
+<div class="box why"><div class="label">Why not train on the Pi?</div><p>It would work, but slowly. The forward pass alone is about 4 times slower on the Pi than on my laptop, and training also needs the backward pass, which costs about twice the forward pass. Forty epochs that take 30 minutes on the laptop would take around two hours on the Pi, while it heats up. Training happens once; predicting happens for every item. So the fast machine trains and the small machine predicts.</p></div>
+
+<h2>Flashing Raspberry Pi OS</h2>
+<p>Flashing means writing a complete operating system image onto the micro-SD card. I used Raspberry Pi Imager, the official free tool, on my laptop.</p>
+<ol>
+<li>Put the 32 GB micro-SD card in the laptop's card reader and open Raspberry Pi Imager.</li>
+<li>Choose device: Raspberry Pi 4. Choose OS: Raspberry Pi OS (64-bit), the Bookworm release with desktop. Choose storage: the SD card.</li>
+<li>In the settings ("OS customisation"), set the hostname to <code>kiosk</code>, the user name to <code>kiosk</code> with a password, the Wi-Fi network for setup, the time zone Asia/Kolkata, and tick "Enable SSH".</li>
+<li>Write the card. Imager checks the written data at the end. Then put the card in the Pi.</li>
+</ol>
+<div class="box why"><div class="label">Why set things in Imager instead of after boot?</div><p>With the hostname, user, Wi-Fi and SSH set in advance, the Pi joins the network on its first boot and I can log in from the laptop straight away with <code>ssh kiosk@kiosk.local</code>. I never need a separate keyboard, mouse or HDMI monitor. The name <code>kiosk.local</code> works because the Pi announces its own name on the local network, so I do not need to know its IP address.</p></div>
+
+<h2>First boot and updates</h2>
+<p>The first boot takes about a minute longer than usual because the Pi expands the file system to fill the card. Then I log in from the laptop and bring everything up to date.</p>
+<pre><code>ssh kiosk@kiosk.local
+sudo apt update
+sudo apt full-upgrade -y
+sudo reboot</code></pre>
+<p><code>apt update</code> downloads the latest list of available packages. <code>apt full-upgrade</code> installs newer versions of everything already installed. <code>sudo</code> runs a command with administrator rights, which installing software needs.</p>
+<p>Then I set three options with the configuration tool <code>sudo raspi-config</code>:</p>
+<ul>
+<li>System Options, Boot / Auto Login, Desktop Autologin: the Pi starts straight into the desktop as the <code>kiosk</code> user, with no password screen. The kiosk app needs a desktop to draw its window on.</li>
+<li>Display Options, Screen Blanking, No: the screen never goes dark when nobody touches it. A kiosk must always show "Place an item".</li>
+<li>Interface Options, VNC, Yes: only for setup, so I can see the Pi's desktop from the laptop. I turn it off when the kiosk is finished.</li>
+</ul>
+
+<h2>Installing the four packages with apt</h2>
+<p>The kiosk needs NumPy (fast arrays and maths), OpenCV (camera and image preparation), Tkinter (windows and buttons) and a GPIO library (the HX711 pins). All four come from the operating system's own package list.</p>
+<pre><code>sudo apt remove -y python3-rpi.gpio
+sudo apt install -y python3-numpy python3-opencv python3-tk python3-rpi-lgpio</code></pre>
+<p>Then a quick check that each one imports:</p>
+<pre><code>python3 -c "import numpy, cv2, tkinter, RPi.GPIO; print(numpy.__version__, cv2.__version__)"</code></pre>
+<p>On my Pi this printed <code>1.24.2 4.6.0</code>, the versions that come with Bookworm.</p>
+
+<div class="box why"><div class="label">Why apt and not pip on the Pi?</div><p>pip is Python's own installer; apt is the operating system's installer. On Bookworm, pip refuses to install into the system Python unless forced, to stop pip and apt from overwriting each other's files. The apt packages are already built for the Pi's ARM processor and tested together with this exact Python 3.11, so nothing needs compiling and nothing breaks at the next update. The kiosk needs no newer versions than apt gives, so apt was the simplest and safest choice.</p></div>
+
+<div class="box why"><div class="label">Why rpi-lgpio instead of the classic RPi.GPIO?</div><p>RPi.GPIO is the old, well-known Python library for the Pi's pins. It talks to the chip's pin registers in an old way that newer kernels and the Pi 5 no longer support. rpi-lgpio is a drop-in replacement: my code still says <code>import RPi.GPIO as GPIO</code> and uses the same functions, but underneath it uses the lgpio library and the kernel's modern GPIO interface. The two packages cannot be installed together, which is why I remove python3-rpi.gpio first. The same code would also run on a Pi 5.</p></div>
+
+<div class="box careful"><div class="label">Be careful</div><p>The apt names differ from the pip names. On the Pi it is <code>python3-opencv</code>, but on the laptop with pip it is <code>opencv-python</code>; both are imported as <code>cv2</code>. Mixing them up gives a "package not found" message, not a broken install, so it is easy to fix once I know.</p></div>
+
+<h2>The touchscreen</h2>
+<p>On Bookworm the official 7-inch display works as soon as its DSI ribbon is connected and its two power jumpers are on pins 2 and 9. There is no driver and no setting to change. The desktop appears on it at 800 x 480 and touch works like a mouse click.</p>
+<p>If the picture is upside down because of how the screen is mounted, I rotate it in Preferences, Screen Configuration on the Pi's desktop. Touch rotates with it. If the screen stays black but the Pi boots (I can still SSH in), the ribbon is almost always the cause: it must be pushed fully in at both ends with the latches closed.</p>
+
+<h2>Testing the camera</h2>
+<p>Linux gives each video device a file name: the first camera is <code>/dev/video0</code>. OpenCV opens it as camera number 0. My one-line test opens the camera, reads one frame, prints its shape and saves it.</p>
+<pre><code>python3 -c "import cv2; c=cv2.VideoCapture(0); ok,f=c.read(); print(ok, f.shape); cv2.imwrite('test.jpg', f)"</code></pre>
+<p>It should print <code>True (480, 640, 3)</code>: success, 480 rows, 640 columns, 3 colour values per pixel. Chapter 6 explains this shape. I copy <code>test.jpg</code> back to the laptop with <code>scp kiosk@kiosk.local:test.jpg .</code> and look at it. The whole blue tray should be in view, sharp and evenly lit.</p>
+<div class="box careful"><div class="label">Be careful</div><p>The first frame or two from a webcam are often too dark, because automatic exposure has not settled yet. The test above can show a dark picture even when everything is fine. My kiosk code opens the camera once at start-up and reads and throws away a few frames before the first real photo (chapter 15).</p></div>
+
+<h2>The laptop side, for training</h2>
+<p>The laptop runs Python 3.11 with three packages in a virtual environment. A virtual environment is a private folder of packages for one project, so this project's versions never clash with other projects on the same laptop.</p>
+<pre><code>python -m venv .venv
+.venv\Scripts\activate          (on Linux or macOS: source .venv/bin/activate)
+pip install numpy opencv-python matplotlib</code></pre>
+<p>NumPy runs the network maths, OpenCV cuts and resizes the crops, and matplotlib draws the training curves and the confusion matrix picture. There is no PyTorch and no TensorFlow anywhere, on either machine. The training uses only the laptop's processor; no graphics card is needed.</p>
+<div class="box why"><div class="label">Why the same Python version on both machines?</div><p>The Pi runs Python 3.11 and so does the laptop. The weights file is written by NumPy's <code>np.savez</code> and read by <code>np.load</code>, a format that is stable across versions. But keeping Python the same removes one whole class of "works here, not there" problems, and my code only uses features that exist in the Pi's NumPy 1.24.</p></div>
+
+<h2>Getting the code and the weights onto the Pi</h2>
+<p>The code lives in a Git repository. Git is a tool that keeps the history of every file and lets two machines share the same files. On the Pi I cloned the repository once into the home folder:</p>
+<pre><code>cd ~
+git clone https://github.com/Gowtham-Jothiramalingam/Self-Checkout-Kiosk.git</code></pre>
+<p>After that, <code>git pull</code> inside the folder brings any code change across. The weights file is copied directly with scp (secure copy, which runs over SSH) after each training run:</p>
+<pre><code>scp classifier/weights.npz kiosk@kiosk.local:~/Self-Checkout-Kiosk/classifier/</code></pre>
+<p>I also keep the final <code>weights.npz</code> and <code>metrics.json</code> in the repository, so a fresh Pi has a working model straight after <code>git clone</code>.</p>
+
+<h2>The repository layout</h2>
+<pre><code>Self-Checkout-Kiosk/
+  README.md
+  classifier/   cnn_numpy.py  prepare_dataset.py  train.py  gradient_check.py
+                weights.npz  metrics.json
+  kiosk/        hx711.py  weight_filter.py  calibrate.py  camera.py  bill.py
+                kiosk_app.py  prices.csv  config.json
+  docs/         book/  photos/  wiring.md
+  v1/           the old YOLOv5 + ESP8266 + Tkinter code, kept for the design story</code></pre>
+<p>The <code>classifier</code> folder is everything about the CNN. The <code>kiosk</code> folder is everything that runs on the Pi at the counter. Each file has one job; chapter 15 lists them all. The kiosk app imports the layer code from <code>classifier/cnn_numpy.py</code>, so the training code and the kiosk code can never drift apart: there is only one copy of each layer.</p>
+
+<h2>Starting the kiosk at every boot</h2>
+<p>A kiosk must start by itself after a power cut, with nobody there to type a command. I used systemd, the part of Linux that starts and watches background programs (called services). Each service is described by a small text file called a unit file.</p>
+<p>Because the app draws a window, it must run as the <code>kiosk</code> user inside the desktop session, so I made a user service rather than a system-wide one. The file is <code>~/.config/systemd/user/kiosk.service</code>:</p>
+<pre><code>[Unit]
+Description=Self-checkout kiosk app
+After=graphical-session.target
+
+[Service]
+WorkingDirectory=/home/kiosk/Self-Checkout-Kiosk/kiosk
+Environment=DISPLAY=:0
+ExecStart=/usr/bin/python3 /home/kiosk/Self-Checkout-Kiosk/kiosk/kiosk_app.py
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target</code></pre>
+<p>Line by line: <code>After=graphical-session.target</code> asks systemd to start the app after the desktop. <code>WorkingDirectory</code> is the folder the app runs in. <code>DISPLAY=:0</code> tells Tkinter which screen to draw on. <code>ExecStart</code> is the command to run. <code>Restart=on-failure</code> with <code>RestartSec=3</code> means that if the app ever crashes, systemd starts it again 3 seconds later. <code>WantedBy=default.target</code> means "start this whenever the user's session starts".</p>
+<p>Then I switch it on:</p>
+<pre><code>systemctl --user daemon-reload
+systemctl --user enable --now kiosk.service
+journalctl --user -u kiosk.service -f</code></pre>
+<p>The first command makes systemd read the new file. The second enables the service for every future boot and starts it now. The third shows the app's printed messages live, which is how I watch the start-up messages and any error without a keyboard on the Pi.</p>
+
+<div class="box why"><div class="label">Why Restart=on-failure matters twice</div><p>It is a safety net for crashes, but it also solves a start-up race. Very early in the desktop start, the display may not yet accept windows. If the app starts a moment too soon, Tkinter fails to open its window and the app exits with an error. systemd simply tries again 3 seconds later, by which time the desktop is ready. This is simpler and more reliable than guessing a fixed delay.</p></div>
+
+<figure>
+<svg width="700" height="190" viewBox="0 0 700 190" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<defs><marker id="a52" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1c2b33"/></marker></defs>
+<rect x="10" y="40" width="100" height="56" rx="6" fill="#e9f3f6" stroke="#5b7083"/><text x="60" y="64" text-anchor="middle" fill="#1c2b33">Power on</text><text x="60" y="82" text-anchor="middle" fill="#5b7083" font-size="11">0 s</text>
+<rect x="130" y="40" width="100" height="56" rx="6" fill="#e9f3f6" stroke="#5b7083"/><text x="180" y="64" text-anchor="middle" fill="#1c2b33">Linux boots</text><text x="180" y="82" text-anchor="middle" fill="#5b7083" font-size="11">from SD card</text>
+<rect x="250" y="40" width="110" height="56" rx="6" fill="#e9f3f6" stroke="#5b7083"/><text x="305" y="64" text-anchor="middle" fill="#1c2b33">Desktop</text><text x="305" y="82" text-anchor="middle" fill="#5b7083" font-size="11">autologin</text>
+<rect x="380" y="40" width="110" height="56" rx="6" fill="#e9f3f6" stroke="#0f7c8c"/><text x="435" y="64" text-anchor="middle" fill="#1c2b33">kiosk.service</text><text x="435" y="82" text-anchor="middle" fill="#5b7083" font-size="11">systemd starts it</text>
+<rect x="510" y="40" width="180" height="56" rx="6" fill="#fdf0e2" stroke="#d9822b"/><text x="600" y="60" text-anchor="middle" fill="#1c2b33">App start-up</text><text x="600" y="76" text-anchor="middle" fill="#5b7083" font-size="11">weights, camera, GPIO,</text><text x="600" y="90" text-anchor="middle" fill="#5b7083" font-size="11">config, tare (2 s)</text>
+<line x1="110" y1="68" x2="128" y2="68" stroke="#1c2b33" marker-end="url(#a52)"/>
+<line x1="230" y1="68" x2="248" y2="68" stroke="#1c2b33" marker-end="url(#a52)"/>
+<line x1="360" y1="68" x2="378" y2="68" stroke="#1c2b33" marker-end="url(#a52)"/>
+<line x1="490" y1="68" x2="508" y2="68" stroke="#1c2b33" marker-end="url(#a52)"/>
+<rect x="510" y="120" width="180" height="44" rx="6" fill="#e9f3f6" stroke="#0f7c8c" stroke-width="2"/><text x="600" y="147" text-anchor="middle" fill="#1c2b33">"Place an item"</text>
+<line x1="600" y1="96" x2="600" y2="118" stroke="#1c2b33" marker-end="url(#a52)"/>
+<line x1="435" y1="96" x2="435" y2="126" stroke="#5b7083" stroke-dasharray="4,3"/>
+<text x="495" y="142" text-anchor="end" fill="#5b7083" font-size="11">if the app fails to open its window,</text><text x="495" y="158" text-anchor="end" fill="#5b7083" font-size="11">systemd retries after 3 s (Restart=on-failure)</text>
+<text x="350" y="22" text-anchor="middle" fill="#1c2b33">From power cable to the first screen, with nobody touching anything</text>
+</svg>
+<figcaption>Figure 5.2. What happens at every boot. Linux starts, the desktop logs in automatically, systemd starts the kiosk service, and the app loads the weights, opens the camera, sets up the GPIO pins, reads config.json and tares the empty scale before showing the first screen.</figcaption>
+</figure>
+
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>From plugging in the power to seeing "Place an item" took about 35 s on my Pi 4. Most of that is Linux and the desktop starting. The app's own start-up, including the 2 s tare, took about 4 s.</p></div>
+
+<div class="box careful"><div class="label">Be careful</div><p>The tare at start-up assumes the tray is empty. If someone leaves an item on the tray during a power cut, the kiosk starts with that item as its zero. The app re-tares by itself whenever the tray has been empty and steady for 5 s (chapter 13), so this corrects itself once the item is lifted off, but I still note it in the shop instructions: "Empty tray before switching on."</p></div>
+
+<div class="box tip"><div class="label">Interview tip</div><p>If asked "how does it start?", I say: "A systemd user service starts the Python app after the desktop logs in. It restarts the app if it crashes. So after a power cut the kiosk comes back by itself in about 35 seconds." Mentioning the restart shows I thought about running it unattended, not just about the demo.</p></div>
+
+<div class="box story"><div class="label">Design story</div><p>Version 1 ran from a Python file on a Windows laptop, with hard-coded paths such as a "Downloads" folder in the code and a hard-coded IP address for the ESP8266. Moving to another laptop meant editing the code. Version 2 finds every file relative to its own folder, keeps settings in <code>config.json</code>, and starts by itself, so a fresh Pi needs only <code>git clone</code>, the four apt packages and the service file.</p></div>
+</section>
