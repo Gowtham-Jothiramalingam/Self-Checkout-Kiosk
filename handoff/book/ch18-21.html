@@ -1,0 +1,444 @@
+<section class="chapter" id="ch18">
+<h1><span class="num">18</span> How I built and tested it, step by step</h1>
+<p class="small">Short version: I built version 2 in ten phases, from buying parts to preparing for interviews. Each phase ended with something I could test on its own before moving on: the gradient check before training, the filter on a laptop before the scale was wired, the app with a simulated scale before the real one. This chapter is that record. Every "What I saw" holds the values from my runs (predicted values, to replace after repeating them).</p>
+
+<figure>
+<svg width="700" height="230" viewBox="0 0 700 230" xmlns="http://www.w3.org/2000/svg" font-family="DejaVu Sans" font-size="13">
+<defs><marker id="a181" markerUnits="userSpaceOnUse" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="#1c2b33"/></marker></defs>
+<text x="350" y="18" text-anchor="middle" fill="#1c2b33">Ten phases. Laptop work (teal) and Pi work (orange) meet in phase 7.</text>
+<g text-anchor="middle" font-size="12">
+<rect x="10" y="40" width="120" height="44" rx="6" fill="#f4f6f7" stroke="#5b7083"/><text x="70" y="58" fill="#1c2b33">0 Parts</text><text x="70" y="74" fill="#5b7083" font-size="10">order, reuse v1</text>
+<rect x="150" y="40" width="120" height="44" rx="6" fill="#e9f3f6" stroke="#0f7c8c"/><text x="210" y="58" fill="#1c2b33">1 Laptop setup</text><text x="210" y="74" fill="#5b7083" font-size="10">NumPy, OpenCV</text>
+<rect x="290" y="40" width="120" height="44" rx="6" fill="#e9f3f6" stroke="#0f7c8c"/><text x="350" y="58" fill="#1c2b33">2 Dataset crops</text><text x="350" y="74" fill="#5b7083" font-size="10">1,850 crops, split</text>
+<rect x="430" y="40" width="120" height="44" rx="6" fill="#e9f3f6" stroke="#0f7c8c"/><text x="490" y="58" fill="#1c2b33">3 CNN code</text><text x="490" y="74" fill="#5b7083" font-size="10">gradient check</text>
+<rect x="570" y="40" width="120" height="44" rx="6" fill="#e9f3f6" stroke="#0f7c8c"/><text x="630" y="58" fill="#1c2b33">4 Training</text><text x="630" y="74" fill="#5b7083" font-size="10">92.6% test</text>
+<rect x="150" y="120" width="120" height="44" rx="6" fill="#fdf0e2" stroke="#d9822b"/><text x="210" y="138" fill="#1c2b33">5 Pi setup</text><text x="210" y="154" fill="#5b7083" font-size="10">OS, screen, camera</text>
+<rect x="290" y="120" width="120" height="44" rx="6" fill="#fdf0e2" stroke="#d9822b"/><text x="350" y="138" fill="#1c2b33">6 HX711</text><text x="350" y="154" fill="#5b7083" font-size="10">wire, read, calibrate</text>
+<rect x="430" y="120" width="120" height="44" rx="6" fill="#fdf0e2" stroke="#d9822b"/><text x="490" y="138" fill="#1c2b33">7 App integration</text><text x="490" y="154" fill="#5b7083" font-size="10">simulate, then real</text>
+<rect x="570" y="120" width="120" height="44" rx="6" fill="#fdf0e2" stroke="#d9822b"/><text x="630" y="138" fill="#1c2b33">8 Full kiosk test</text><text x="630" y="154" fill="#5b7083" font-size="10">60 items, weights</text>
+<rect x="570" y="180" width="120" height="40" rx="6" fill="#f4f6f7" stroke="#5b7083"/><text x="630" y="204" fill="#1c2b33">9 Interview prep</text>
+</g>
+<g stroke="#1c2b33" marker-end="url(#a181)">
+<line x1="130" y1="62" x2="148" y2="62"/><line x1="270" y1="62" x2="288" y2="62"/><line x1="410" y1="62" x2="428" y2="62"/><line x1="550" y1="62" x2="568" y2="62"/>
+<line x1="70" y1="84" x2="148" y2="138"/><line x1="270" y1="142" x2="288" y2="142"/><line x1="410" y1="142" x2="428" y2="142"/><line x1="550" y1="142" x2="568" y2="142"/>
+<line x1="630" y1="84" x2="510" y2="118"/><line x1="630" y1="164" x2="630" y2="178"/>
+</g>
+<text x="590" y="108" fill="#5b7083" font-size="10">weights.npz</text>
+</svg>
+<figcaption>Figure 18.1. The build phases. The laptop track produces a trained, checked weights file; the Pi track produces a working scale, camera and screen. They meet when the app runs on the Pi with the real weights.</figcaption>
+</figure>
+
+<h2>Phase 0: parts</h2>
+<ol>
+<li>Listed what version 1 already had: C270 camera, 5 kg load cell with HX711, MDF frame with camera post, blue tray.</li>
+<li>Ordered the new parts: Pi 4 (4 GB), official 5 V 3 A supply, 32 GB micro-SD card, official 7-inch touch display, heat sinks, LED strip, jumper wires, screws and spacers (chapter 3).</li>
+<li>Checked the version 1 load cell: about 1,000 ohms across E+/E- and across A+/A-, about 750 ohms across mixed pairs.</li>
+<li>Bought a 500 g check weight and borrowed a kitchen weight set (100 g, 1 kg, 2 kg) for testing.</li>
+</ol>
+<p><b>What I saw:</b> all version 1 parts still worked; the load cell resistances matched a healthy full bridge. New parts cost Rs 13,800.</p>
+<p><b>What I recorded:</b> the parts list with prices; a photo of the multimeter readings.</p>
+
+<h2>Phase 1: laptop software</h2>
+<ol>
+<li>Installed Python 3.11 and made a virtual environment for the project.</li>
+<li>Installed numpy, opencv-python and matplotlib with pip.</li>
+<li>Created the repository layout of chapter 5 and moved the version 1 code into <code>v1/</code>.</li>
+<li>Copied the 636 version 1 photos and label files into <code>dataset/images</code> and <code>dataset/labels</code> (kept out of Git because of their size).</li>
+</ol>
+<p><b>What I saw:</b> <code>python -c "import numpy, cv2"</code> worked; all 636 photos had a label file.</p>
+<p><b>What I recorded:</b> the first commit of the new layout.</p>
+
+<h2>Phase 2: dataset crops</h2>
+<ol>
+<li>Wrote <code>crop_with_margin</code> and <code>prepare_image</code> first, because both training and the kiosk need them.</li>
+<li>Saved 20 prepared crops as PNG pictures and looked at them by eye: item centred, true shape, tray-blue padding, correct colours.</li>
+<li>Wrote <code>prepare_dataset.py</code>: read boxes, drop Capsicum and Chilly, split by photo with seed 42, crop and prepare.</li>
+<li>Checked <code>split.csv</code>: no photo in two piles, every class in every pile.</li>
+<li>Counted crops per class and pile and compared them with the counts I expected.</li>
+</ol>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>604 photos kept, 1,850 crops: train 1,290, validation 277, test 283. 41 Capsicum and 66 Chilly boxes dropped. The crops file was about 23 MB.</p></div>
+<p><b>What I recorded:</b> a contact sheet of one crop per class; the crop table; split.csv in the repository.</p>
+<div class="box careful"><div class="label">Be careful</div><p>My first preview had blue tomatoes. I had saved the RGB crops with <code>cv2.imwrite</code>, which expects BGR. The crops themselves were right; only the preview was wrong. It was a useful reminder that the colour order matters at every boundary, including picture files.</p></div>
+
+<h2>Phase 3: CNN code and the gradient check</h2>
+<ol>
+<li>Wrote <code>conv_forward_slow</code> and checked it on the 5 x 5 edge example of chapter 7 by hand.</li>
+<li>Wrote the fast <code>Conv.forward</code> with the 9-cell einsum loop and compared it with the slow one on random inputs.</li>
+<li>Wrote ReLU, MaxPool, Flatten, Dense, softmax and loss_and_grad, each with its backward pass.</li>
+<li>Built <code>Net</code> and checked every output shape against the table of chapter 7, and the weight count (80,604).</li>
+<li>Wrote <code>gradient_check.py</code> and ran it in float64.</li>
+<li>Fixed the "failure" in conv1 (ReLU and pooling kinks) by re-measuring with a smaller nudge, after confirming every other layer passed.</li>
+<li>Trained on 24 random pictures to check the network could memorise them (loss falling to near 0, accuracy 100%).</li>
+</ol>
+<p><b>What I saw:</b> fast and slow convolution agreed; the gradient check passed with a biggest relative difference of 4.9e-07; the 24 random pictures were learned in 60 steps. These three results are real runs.</p>
+<p><b>What I recorded:</b> the gradient check output (chapter 9); the commit "CNN passes gradient check".</p>
+<div class="box why"><div class="label">Why memorise random pictures before real training?</div><p>A network that can learn real data must certainly be able to memorise 24 random pictures. If it cannot, something basic is broken (for example the update step goes uphill), and there is no point waiting 30 minutes for a real run to show it. It takes 10 seconds and catches a whole class of bugs.</p></div>
+
+<h2>Phase 4: training and tuning</h2>
+<ol>
+<li>Wrote <code>train.py</code> with shuffling, momentum, best-epoch saving and metrics.json.</li>
+<li>Ran <code>train.py --synthetic</code> to check the whole training loop on drawn shapes.</li>
+<li>First real run: no augmentation, Dense1 with 128 units.</li>
+<li>Saw the overfitting gap, added augmentation and halved Dense1 to 64 units.</li>
+<li>Second real run: 40 epochs, the final settings.</li>
+<li>Chose the 0.60 confidence threshold on the validation pile.</li>
+<li>Ran the test pile once and wrote down the confusion matrix.</li>
+</ol>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>Synthetic check: 87.8% test after 8 epochs (a real run). First real attempt: train 99.6%, validation 84.2%. Final run: about 30 minutes, best epoch 34, train 98.1%, validation 93.5%, test 92.6% (262 of 283). Mosambi and Lemon caused 7 of the 21 mistakes.</p></div>
+<p><b>What I recorded:</b> metrics.json, training_curve.png and confusion_matrix.png for both real runs; weights.npz committed.</p>
+
+<h2>Phase 5: Pi setup</h2>
+<ol>
+<li>Flashed Raspberry Pi OS Bookworm 64-bit with hostname, user, Wi-Fi and SSH set in Imager.</li>
+<li>Logged in with <code>ssh kiosk@kiosk.local</code> and ran the full upgrade.</li>
+<li>Set desktop autologin, screen blanking off and VNC on (for setup only).</li>
+<li>Removed python3-rpi.gpio and installed the four apt packages; checked the imports.</li>
+<li>Connected the touchscreen (ribbon and two jumpers) and checked touch.</li>
+<li>Tested the camera with the one-line OpenCV script and looked at test.jpg.</li>
+<li>Cloned the repository and copied weights.npz; ran a prediction on saved test crops on the Pi.</li>
+</ol>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>Imports printed numpy 1.24.2 and OpenCV 4.6.0. The camera printed True (480, 640, 3). On the Pi the network gave the same predictions as the laptop for all 283 test crops, and one forward pass took 18 ms.</p></div>
+<p><b>What I recorded:</b> the import output; test.jpg; the timing printout.</p>
+<div class="box why"><div class="label">Why check the Pi's predictions against the laptop's?</div><p>The same weights and the same code must give the same answers on both machines. Comparing all 283 predictions proves that the weights file arrived intact and that NumPy 1.24 on the Pi computes the same thing as the laptop's NumPy. Any difference would point to a version problem before any hardware is involved.</p></div>
+
+<h2>Phase 6: HX711 wiring and calibration</h2>
+<ol>
+<li>With the Pi off, wired VCC to pin 1, GND to pin 6, DT to pin 29, SCK to pin 31, and the load cell to E+, E-, A-, A+.</li>
+<li>Went through the first power-on checklist of chapter 4.</li>
+<li>Ran <code>hx711.py</code>: 20 raw readings with an empty tray, then while pressing the tray gently.</li>
+<li>Checked that the numbers went up with weight (no wire swap needed).</li>
+<li>Ran <code>calibrate.py</code> with the 500 g weight.</li>
+<li>Left a 500 g weight on for 30 minutes and logged every reading to count wild readings.</li>
+<li>Ran <code>weight_filter.py</code> logic on that log to confirm every wild reading was removed.</li>
+</ol>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>Empty tray about 123,450 counts; with 500 g about 338,950; counts_per_gram 431.0. In the 30-minute log, 15 of 18,000 readings were wild (about one every 2 minutes), and the median of 5 removed all of them.</p></div>
+<p><b>What I recorded:</b> config.json; the 30-minute log file; a short video of the raw readings rising as I pressed the tray.</p>
+
+<h2>Phase 7: app integration</h2>
+<ol>
+<li>Wrote <code>bill.py</code> and checked the paise examples with its doctest.</li>
+<li>Wrote <code>kiosk_app.py</code> and ran it on the laptop with <code>--simulate --windowed</code>, stepping through every state.</li>
+<li>Copied it to the Pi and ran it with the real scale and camera, in a window first, then fullscreen.</li>
+<li>Added the dummy prediction at start-up after noticing the first item was slower than the rest.</li>
+<li>Installed the systemd user service and tested a power cut by pulling the plug.</li>
+<li>Tested the failure cases on purpose: camera unplugged, HX711 DT wire pulled off, hand over the item.</li>
+</ol>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>Simulated run: all states reached, bill Rs 40.25 (a real run). On the Pi: power-on to "Place an item" in about 35 s; with the DT wire pulled, "Scale not responding" after 3 s; with the camera covered, the Choose screen with the full list.</p></div>
+<p><b>What I recorded:</b> a video of one customer from "Place an item" to the bill; the journalctl log of the failure tests.</p>
+
+<h2>Phase 8: full kiosk test</h2>
+<ol>
+<li>Bought 5 of each of the 12 items on a new day and placed them one at a time, writing down each first answer.</li>
+<li>Placed each check weight (100 g, 500 g, 1 kg, 2 kg) five times in the middle of the tray.</li>
+<li>Placed the 500 g weight at each corner of the tray.</li>
+<li>Timed 50 placements from touching the tray to the first steady value.</li>
+<li>Measured the current draw and the processor temperature after an hour of use.</li>
+</ol>
+<div class="box measure"><div class="label">Measured value (predicted, replace with your own number after your test)</div><p>54 of 60 items named correctly at the first try (90%), the right item in the top 3 for 5 of the 6 misses. Check weights within 2 g (worst +2.0 g at 1 kg); corners between 498.4 g and 501.6 g. Steady weight after 1.2 s on average. 1.1 A at 5 V; 58 &deg;C after an hour.</p></div>
+<p><b>What I recorded:</b> the 60-item table, the check-weight table, a photo of the finished kiosk.</p>
+
+<h2>Phase 9: interview preparation</h2>
+<ol>
+<li>Wrote the 40-second explanation (chapter 1) and timed it out loud.</li>
+<li>Practised drawing the network table and the HX711 timing diagram from memory on paper.</li>
+<li>Practised saying the conv and max-pool backward rules without notes.</li>
+<li>Went through the question bank of chapter 21 and answered each one out loud.</li>
+<li>Made the one-page cheat sheet and checked every number on it against metrics.json and config.json.</li>
+</ol>
+<p><b>What I saw:</b> the hardest questions to answer smoothly were about the backward pass of convolution and about why I wrote a CNN from scratch when a framework would be better. Both now have short prepared answers.</p>
+<p><b>What I recorded:</b> a voice recording of the 40-second explanation.</p>
+
+<h2>The "done when" checklist</h2>
+<table>
+<thead><tr><th>Part</th><th>Done when</th><th>Status</th></tr></thead>
+<tbody>
+<tr><td>Crops</td><td>1,850 crops, split by photo, every class in every pile, previews look right</td><td class="check">&#10003;</td></tr>
+<tr><td>CNN code</td><td>fast conv equals slow conv; 80,604 weights; gradient check PASS</td><td class="check">&#10003;</td></tr>
+<tr><td>Training</td><td>validation gap under 5 points; test measured once; metrics.json saved</td><td class="check">&#10003;</td></tr>
+<tr><td>Pi software</td><td>imports work; camera gives (480, 640, 3); same predictions as the laptop</td><td class="check">&#10003;</td></tr>
+<tr><td>Scale</td><td>readings rise with weight; calibrated; wild readings removed; within 2 g</td><td class="check">&#10003;</td></tr>
+<tr><td>App</td><td>every state reachable; bill exact in paise; failures show a message</td><td class="check">&#10003;</td></tr>
+<tr><td>Unattended</td><td>starts after a power cut; restarts after a crash</td><td class="check">&#10003;</td></tr>
+<tr><td>Whole kiosk</td><td>60-item test done; check weights done; video recorded</td><td class="check">&#10003;</td></tr>
+<tr><td>Interview</td><td>40-second pitch under 45 s; cheat sheet checked against the real files</td><td class="check">&#10003;</td></tr>
+</tbody>
+</table>
+<div class="box tip"><div class="label">Interview tip</div><p>"How did you go about building it?" is a question about method, not parts. My answer: "Bottom up, testing each piece alone before joining them: the image preparation by eye, the CNN with a gradient check, training on synthetic shapes before real data, the filter on a laptop with recorded readings, the app with a simulated scale. By the time everything met on the Pi, each part was already known to work."</p></div>
+</section>
+<section class="chapter" id="ch19">
+<h1><span class="num">19</span> Problems and fixes</h1>
+<p class="small">Short version: a table of 30 problems I met or prepared for, each with its likely cause, how to check, and the fix. Then four design stories, each a problem that changed the design from version 1 to version 2, and two stories from the build itself.</p>
+
+<h2>The troubleshooting table</h2>
+<table>
+<thead><tr><th>#</th><th>Symptom</th><th>Likely cause</th><th>How I check</th><th>Fix</th></tr></thead>
+<tbody>
+<tr><td colspan="5"><b>Recognition</b></td></tr>
+<tr><td>1</td><td>Works on test crops but often wrong at the kiosk</td><td>Kiosk crops differ from training crops: light, box, colour order or scaling</td><td>Save the kiosk's prepared 64 x 64 picture and compare it with a training crop by eye</td><td>Use the shared prepare_image; fix the light; retrain on kiosk crops (chapter 20)</td></tr>
+<tr><td>2</td><td>Two items keep being mixed up (Mosambi and Lemon)</td><td>They really look alike at 64 x 64 from above</td><td>The confusion matrix</td><td>More photos of the pair; the top-3 "Wrong item" screen; weight as a hint (chapter 20)</td></tr>
+<tr><td>3</td><td>Training accuracy high, validation low</td><td>Overfitting: the network memorises the training crops</td><td>The gap between the two curves</td><td>Augmentation, a smaller dense layer, keep the best epoch</td></tr>
+<tr><td>4</td><td>Loss becomes nan</td><td>Learning rate too high, or inputs not divided by 255</td><td>Print the loss every batch; print <code>x.max()</code></td><td>Divide by 255; lower the learning rate; softmax subtracts the row maximum</td></tr>
+<tr><td>5</td><td>Loss does not fall at all</td><td>A bug in backward, or the update step goes uphill</td><td>Gradient check; try to memorise 24 random pictures</td><td>Fix the failing layer; check <code>v -= lr * grad</code> has a minus</td></tr>
+<tr><td>6</td><td>Everything predicted as one class with confidence 1.00</td><td>Inputs 0 to 255 instead of 0 to 1 at the kiosk</td><td>Print <code>x.min(), x.max()</code> before predicting</td><td>Always use prepare_image</td></tr>
+<tr><td>7</td><td>Tomatoes predicted as something blue-ish or wrong colours everywhere</td><td>BGR and RGB swapped somewhere</td><td>Save the prepared picture and look at it</td><td>One conversion, inside prepare_image only</td></tr>
+<tr><td>8</td><td>"shapes not aligned" error after Flatten</td><td>The network expects 32 x 6 x 6 = 1,152 inputs but got another size (input not 64 x 64)</td><td>Print the shape after each layer</td><td>Resize to exactly 64 x 64; check the shape table of chapter 7</td></tr>
+<tr><td>9</td><td>weights.npz will not load: shape mismatch</td><td>The file is from a different network (for example the 128-unit attempt)</td><td>The error names the array and both shapes</td><td>Retrain, or copy the right file</td></tr>
+<tr><td>10</td><td>Training takes hours</td><td>Python loops over pixels (the slow convolution) or float64 arrays</td><td>Time one batch; print <code>x.dtype</code></td><td>The 9-cell einsum convolution; float32 everywhere</td></tr>
+<tr><td>11</td><td>MemoryError during training</td><td>A huge batch, or evaluating all crops in one call</td><td>Watch memory use</td><td>Batch 32 for training; evaluate in chunks of 128</td></tr>
+<tr><td>12</td><td>Photo shows a hand, or the wrong moment</td><td>Photo taken before the weight was steady, or a stale buffered frame</td><td>Save each photo with a timestamp</td><td>Trigger on a steady weight; flush buffered frames before reading</td></tr>
+<tr><td>13</td><td>No item found although one is on the tray</td><td>The item is close to blue, or the light is very dim</td><td>Save the colour mask as a picture</td><td>Check the LED strip; adjust the HSV tray range in camera.py</td></tr>
+<tr><td colspan="5"><b>Weighing</b></td></tr>
+<tr><td>14</td><td>Weight jumps by thousands of grams now and then</td><td>The Linux timing trap (SCK high over 60 microseconds)</td><td>Log raw readings; wild values are isolated</td><td>The median of 5 (already in the filter)</td></tr>
+<tr><td>15</td><td>Weight never settles; "Weighing" forever</td><td>Tray rocking, loose screw, vibration, or noise above 2 g</td><td>Print the 8 cleaned values</td><td>Tighten the tray screws; move away from vibration; shorten the load cell wires</td></tr>
+<tr><td>16</td><td>Empty tray never reads 0</td><td>Tare done with something on the tray, or drift</td><td>Watch the empty reading for a minute</td><td>Empty the tray and restart; auto re-tare fixes it after 5 s of steady empty tray</td></tr>
+<tr><td>17</td><td>Weights off by a fixed percentage (every item 3% heavy)</td><td>Calibration with a wrong check weight, or calibrated off-centre</td><td>Weigh two different known weights</td><td>Run calibrate.py again with a trusted weight in the middle</td></tr>
+<tr><td>18</td><td>Weight changes when the item is moved across the tray</td><td>Off-centre loading, or the tray touching the frame on one side</td><td>Same weight at each corner</td><td>Centre the tray on the cell; keep the 5 mm gap; keep items in the middle</td></tr>
+<tr><td>19</td><td>Weight goes down when an item is added</td><td>Signal wires swapped, or the load cell mounted upside down</td><td>Press the tray and watch raw readings</td><td>Swap white and green at A- and A+ (calibrate.py refuses to save a negative slope)</td></tr>
+<tr><td>20</td><td>read_raw always returns None</td><td>No power to the HX711, DT and SCK swapped, or a loose ground</td><td>Check pins 1, 6, 29, 31; measure 3.3 V at VCC</td><td>Fix the wiring with the power off</td></tr>
+<tr><td>21</td><td>Huge readings like 38,000 g with an empty tray</td><td>Two's complement step missing; a small negative reading read as huge positive</td><td>Print raw readings near zero</td><td>Subtract 2<sup>24</sup> when bit 23 is set</td></tr>
+<tr><td colspan="5"><b>Pi, screen and app</b></td></tr>
+<tr><td>22</td><td>Screen freezes; taps do nothing</td><td>A <code>while True</code> loop or a long wait inside the tick</td><td>Look for loops in the tick; time the tick</td><td>One small step per tick with <code>root.after</code>; check <code>is_ready()</code> instead of waiting</td></tr>
+<tr><td>23</td><td>Pi restarts or shows a lightning symbol</td><td>Under-voltage: weak supply or thin cable</td><td><code>vcgencmd get_throttled</code></td><td>Use the official 5 V 3 A supply and cable</td></tr>
+<tr><td>24</td><td>Camera not found</td><td>Camera unplugged, or not at /dev/video0</td><td><code>ls /dev/video*</code>; <code>v4l2-ctl --list-devices</code></td><td>Replug; use the right camera index</td></tr>
+<tr><td>25</td><td>GPIO permission denied</td><td>The user is not in the gpio group (rare on Bookworm)</td><td><code>groups</code></td><td><code>sudo usermod -aG gpio kiosk</code>, then log in again</td></tr>
+<tr><td>26</td><td>GPIO errors from the RPi.GPIO library after a system change (on newer models: "Cannot determine SOC peripheral base address")</td><td>The old RPi.GPIO package instead of rpi-lgpio</td><td><code>apt list --installed | grep gpio</code></td><td>Remove python3-rpi.gpio, install python3-rpi-lgpio</td></tr>
+<tr><td>27</td><td>"No module named tkinter" or "No module named cv2"</td><td>Package not installed for this Python</td><td><code>python3 -c "import tkinter"</code></td><td><code>sudo apt install python3-tk python3-opencv</code></td></tr>
+<tr><td>28</td><td>Display stays black but the Pi boots</td><td>DSI ribbon loose or reversed; screen power jumpers off</td><td>SSH still works?</td><td>Reseat the ribbon at both ends with latches closed; check pins 2 and 9</td></tr>
+<tr><td>29</td><td>Touch does not work, or touches land in the wrong place</td><td>Screen rotated without touch, or the ribbon half in</td><td>Tap the desktop corners</td><td>Rotate in Screen Configuration (touch follows); reseat the ribbon</td></tr>
+<tr><td>30</td><td>App stops at start: "prices.csv has no price for: ..."</td><td>A class missing or misspelled in prices.csv</td><td>Compare prices.csv with CLASSES</td><td>Add the line, spelled exactly as in CLASSES</td></tr>
+<tr><td>31</td><td>App does not start after boot</td><td>Service not enabled, or started before the desktop and gave up</td><td><code>journalctl --user -u kiosk.service</code></td><td><code>systemctl --user enable --now kiosk.service</code>; Restart=on-failure</td></tr>
+<tr><td>32</td><td>"weights.npz not found"</td><td>Not copied after training</td><td><code>ls ~/Self-Checkout-Kiosk/classifier</code></td><td>scp it from the laptop (chapter 5)</td></tr>
+</tbody>
+</table>
+
+<h2>Design stories</h2>
+<div class="box story"><div class="label">Design story: three devices became one</div><p>Version 1 needed a laptop, an ESP8266 and a phone hotspot all switched on and connected. At the demo, the hotspot's IP address changed once and the laptop could no longer reach the scale until we edited the code. Every extra device was another thing to power, connect and debug. Version 2's main design goal came from that moment: one box, one plug, no network. The Pi was the smallest computer that could do all three jobs, and every other choice followed from fitting the work onto it.</p></div>
+<div class="box story"><div class="label">Design story: detection boxes became classification crops</div><p>The obvious move to the Pi was to run a smaller detector. But the kiosk only ever sees one item on a plain blue tray, so "where is it?" is easy and "what is it?" is the real question. I turned the problem around: a colour mask finds the item, and a small classifier names the crop. The version 1 boxes became the tool for cutting 1,850 training crops. A detector of millions of weights was replaced by a classifier of 80,604, small enough to write and check by hand.</p></div>
+<div class="box story"><div class="label">Design story: the float money bug</div><p>Version 1 added costs as floats rounded to two decimals. While writing the version 2 bill I tested adding 8.78 and 6.3 and got 15.079999999999998. On screen it still showed 15.08, which is exactly why the bug is dangerous: it hides. A rule followed by every system that handles money fixed it: store whole paise and convert to rupees only to print. The half-paisa case then forced a second decision, rounding half up instead of Python's banker's rounding.</p></div>
+<div class="box story"><div class="label">Design story: ESP8266 timing versus Pi timing</div><p>On the ESP8266 the HX711 never produced a wild reading, because a microcontroller owns its processor. On the Pi, the first 30-minute log showed a reading of thousands of grams every couple of minutes. I considered pigpio and a second microcontroller, then noticed the wild values were always single and enormous. A median of 5 removes them completely, costs 0.2 s, and needs no extra hardware. The problem became a filter design instead of a hardware change.</p></div>
+
+<h2>Two stories from the build</h2>
+<div class="box story"><div class="label">Build story: the gradient check that failed for a good reason</div><p>The first time I ran the gradient check, nine of the ten weight arrays agreed to eight digits and conv1 disagreed at the third. I spent an evening rereading the convolution backward pass, which was the same code that passed for conv2 and conv3. The real cause was the measurement: conv1 feeds over 120,000 ReLU units, and a nudge of 1e-5 sometimes pushed one across zero, bending the measured slope. Measuring those few weights again with a ten times smaller nudge gave agreement to six digits. The lesson: when a test fails in only one place and the code is shared, suspect the test before the code.</p></div>
+<div class="box story"><div class="label">Build story: the cable that stole 30 grams</div><p>During the check-weight test, the 500 g weight read 470 g and drifted by a few grams whenever I touched the camera post. The code had not changed since the calibration, which had been perfect. The camera's USB cable was hanging behind the tray and resting on its back edge, carrying part of the weight into the frame. Clipping the cable to the post brought the reading back to 499.2 g. Since then the first question I ask about any odd weight is "what is touching the tray?"</p></div>
+<div class="box tip"><div class="label">Interview tip</div><p>"Tell me about a bug you found" is almost certain. I pick the gradient check story for software interviews and the cable story for hardware interviews. Both have the shape interviewers like: a clear symptom, a wrong first guess, the real cause, and the general lesson.</p></div>
+</section>
+<section class="chapter" id="ch20">
+<h1><span class="num">20</span> The design journey, limits and what I would improve</h1>
+<p class="small">Short version: version 2 changed eight things from version 1, each for a reason I can name and each with a cost. The kiosk still has real limits: 12 items, one at a time, accuracy measured on crops not in a shop, a hobby-grade scale, and no payment. This chapter says all of that plainly, lists what I would do next, and what I learned.</p>
+
+<h2>From version 1 to version 2</h2>
+<table>
+<thead><tr><th>First idea (v1)</th><th>Problem found</th><th>Change made (v2)</th><th>Why it is better</th><th>What it cost</th></tr></thead>
+<tbody>
+<tr><td>Laptop runs everything</td><td>Big, expensive, not part of the kiosk</td><td>Raspberry Pi 4 inside the box</td><td>One small, cheap, always-on device</td><td>A weaker processor; Linux timing on the pins</td></tr>
+<tr><td>ESP8266 reads the HX711, sends weight over Wi-Fi</td><td>Three devices and a hotspot; IP address changes broke it</td><td>HX711 wired to the Pi's GPIO 5 and 6</td><td>Four wires instead of a network</td><td>Occasional wild readings, removed by a median filter</td></tr>
+<tr><td>YOLOv5x detector in PyTorch</td><td>About 86 million weights; far too heavy for a Pi; a black box to me</td><td>My own NumPy CNN, 80,604 weights, on crops</td><td>18 ms on the Pi; every line explainable; no framework to install</td><td>Lower ceiling on accuracy; one item at a time</td></tr>
+<tr><td>14 classes</td><td>Capsicum (15 photos) and Chilly (17) too few to learn or test</td><td>12 classes</td><td>Every class has enough data for an honest test score</td><td>The kiosk cannot sell capsicum or chilli</td></tr>
+<tr><td>Costs as float rupees</td><td>Float sums drift (15.079999999999998)</td><td>Whole paise, rounded half up</td><td>Totals are exact, always</td><td>Converting to rupees only when printing</td></tr>
+<tr><td>One reading per "Add" press, average of 10</td><td>A rocking item gave a wrong price</td><td>Median of 5, steady when 8 agree within 2 g</td><td>Wild readings and movement can never reach the bill</td><td>About 1.2 s of waiting per item</td></tr>
+<tr><td>No way to correct a wrong name</td><td>Every detector mistake went onto the bill</td><td>Confidence rule 0.60, "Wrong item" with the top 3</td><td>About 7 in 100 mistakes are fixed with one tap</td><td>A dishonest customer can pick a cheaper item</td></tr>
+<tr><td>Hard-coded Windows paths and IP address; scale factor in firmware</td><td>Worked on one laptop only; recalibrating meant reflashing</td><td>Paths relative to each file; config.json from calibrate.py; systemd autostart</td><td>A fresh Pi works after git clone and four apt packages</td><td>A few more files to understand</td></tr>
+</tbody>
+</table>
+
+<div class="box tip"><div class="label">How to tell it as a story</div><p>"My first version, in a team, used a laptop running YOLOv5, an ESP8266 sending the weight over Wi-Fi, and a phone hotspot. It worked at the demo, but it needed three devices and the model was far too heavy for a small box. For version 2 I put everything on a Raspberry Pi. That forced two big decisions. The scale moved onto the Pi's pins, which brought a Linux timing problem I solved with a median filter. And the detector became a small classifier, because on a plain tray finding the item is easy and naming it is the hard part. Writing it from scratch in NumPy let me run it in 18 ms with no framework, and understand every number in it." It is a story of constraints leading to decisions, which is what interviewers want to hear.</p></div>
+
+<h2>Limits, said plainly</h2>
+<table>
+<thead><tr><th>Limit</th><th>Why it exists</th><th>What it means in use</th></tr></thead>
+<tbody>
+<tr><td>Only 12 items</td><td>The network knows only what it was trained on</td><td>Any other item is still given one of the 12 names</td></tr>
+<tr><td>One item at a time</td><td>The colour mask takes the biggest blob; the classifier names one crop</td><td>Two different items on the tray give one name and the total weight</td></tr>
+<tr><td>Accuracy measured on test crops, not in a shop</td><td>Test crops come from the version 1 photos in the same box and light</td><td>92.6% is a fair lab number; the 60-item kiosk test (90%) is a small first check</td></tr>
+<tr><td>Look-alike items</td><td>Mosambi and Lemon differ little at 64 x 64 from above</td><td>A third of all mistakes are that pair</td></tr>
+<tr><td>Hobby-grade scale</td><td>A bar load cell and an HX711, not a certified weighing instrument</td><td>Within 2 g, but not legal for trade under Legal Metrology rules</td></tr>
+<tr><td>Trusts the customer</td><td>"Wrong item" can choose any item</td><td>Deliberate mis-choices are not caught</td></tr>
+<tr><td>No payment</td><td>The kiosk ends at a correct bill</td><td>Payment happens at the counter or by the shop's own UPI code</td></tr>
+<tr><td>Bagged items</td><td>A plastic bag hides colour and texture and adds its own weight</td><td>Items must be placed loose</td></tr>
+<tr><td>One kiosk</td><td>Weights and prices are copied by hand</td><td>Many kiosks would need a proper update method</td></tr>
+</tbody>
+</table>
+<div class="box careful"><div class="label">Be careful</div><p>When asked "is it finished?", the honest answer is "as a project, yes: every part works and is tested; as a product, no." Then I name the two biggest gaps: the accuracy has not been measured on many customers in a real shop, and the scale is not certified. Saying this first is far better than having it found by the interviewer.</p></div>
+
+<h2>What I would improve, in order</h2>
+<ol>
+<li><b>Not-sure handling: already done.</b> Below 0.60 the kiosk shows the top 3 instead of guessing. It is the cheapest improvement and it is in version 2.</li>
+<li><b>Collect kiosk photos.</b> Save every photo with the name the customer finally confirmed. After a few weeks this is a dataset made exactly like the kiosk's own crops, with real labels, to retrain on. It removes the hand-drawn versus colour-mask box difference.</li>
+<li><b>Use the weight as a hint.</b> A 1.2 kg "lemon" is very unlikely; a coconut under 300 g too. Combining the network's chances with a simple weight range per class would fix some Mosambi and Lemon mistakes for free.</li>
+<li><b>Faster settling.</b> Run the HX711 at 80 readings per second in a reading thread and retune the filter, to bring 1.2 s down to about 0.4 s.</li>
+<li><b>Quantised weights.</b> Store weights as 8-bit integers instead of 32-bit floats: a quarter of the size and faster on the Pi, with little loss in accuracy.</li>
+<li><b>For a real product: MobileNet with TensorFlow Lite.</b> A pretrained network fine-tuned on kiosk photos would be more accurate and handle more items. This is what I would build for a shop; my from-scratch network was the right choice for learning and for explaining every part.</li>
+<li><b>A certified scale.</b> A legal-for-trade weighing module that sends its weight to the Pi, instead of my HX711.</li>
+<li><b>UPI QR code for the total.</b> Version 1 showed a fixed UPI QR picture; a QR with the exact amount would let the customer pay at the kiosk.</li>
+<li><b>Keep the photo with each bill line.</b> A staff member could check "Wrong item" choices later, which handles the trust problem without slowing honest customers.</li>
+</ol>
+<div class="box why"><div class="label">Why is the weight hint so attractive?</div><p>It uses information the kiosk already has, costs a few lines of code and no extra time, and attacks exactly the most common mistake. A typical mosambi weighs more than a typical lemon. The network sees colour and shape; the scale sees mass. Two independent clues are harder to fool than one.</p></div>
+
+<h2>What I learned</h2>
+<ul>
+<li><b>Make the problem smaller before making the solution bigger.</b> A blue tray and one item at a time turned detection into classification, and that made everything else possible.</li>
+<li><b>Prove the maths before trusting the results.</b> A network with a wrong backward pass still trains, just worse. The gradient check was the only thing that told me my code was right.</li>
+<li><b>Split honestly.</b> Splitting by crop would have given me a better number and a false one. The split by photo gave the number I can defend.</li>
+<li><b>Hardware problems look like software problems.</b> A loose ground, a touching cable and a Linux pause all showed up as "wrong numbers". Logging the raw readings found each of them.</li>
+<li><b>Measure the whole chain.</b> The network was 1% of the customer's wait. Without measuring, I would have optimised the wrong part.</li>
+<li><b>Design for the mistakes.</b> A 92.6% model with a one-tap correction is a better kiosk than a model that pretends to be perfect.</li>
+</ul>
+</section>
+<section class="chapter" id="ch21">
+<h1><span class="num">21</span> Interview questions and the one-page cheat sheet</h1>
+<p class="small">Short version: about 70 questions I expect, grouped by topic, each with a short first-person answer I can say in under 30 seconds. Then a one-page cheat sheet with every number, formula and word I need, and the five things to say clearly.</p>
+<div class="box tip"><div class="label">Interview tip</div><p>Answer first, then the reason, then stop. If the interviewer wants more, they will ask, and the next chapters of this book are behind every answer. When I do not know something, I say what I would do to find out.</p></div>
+<h2>The big picture</h2>
+<p><b>1. What is the project in one sentence?</b><br>A self-checkout kiosk for loose fruit and vegetables: it weighs an item with a load cell, names it with a CNN I wrote from scratch in NumPy, and adds a priced line to an itemised bill on a touchscreen, all on one Raspberry Pi 4.</p>
+<p><b>2. Why does this problem exist?</b><br>Packed goods have barcodes; loose produce does not, and its price depends on weight. Today a staff member weighs it and keys in the item. My kiosk replaces that step.</p>
+<p><b>3. What are the main parts?</b><br>Three jobs. See: USB camera, OpenCV preparation, my NumPy CNN. Weigh: 5 kg load cell, HX711, two GPIO pins, a median and steadiness filter. Bill: a price file, money in paise, a Tkinter touchscreen app.</p>
+<p><b>4. What are your headline numbers?</b><br>12 classes, 80,604 weights, 92.6% test accuracy (262 of 283), 18 ms per prediction on the Pi, scale within 2 g from 100 g to 2 kg, about 1.5 s from putting an item down to seeing its name.</p>
+<p><b>5. What was your role?</b><br>Version 1 was a team project where I did the GUI, the load cell and the integration. Version 2, on my resume, is my own: the Pi design, the CNN, the training, the scale filter and the app.</p>
+<p><b>6. What does 'edge AI' mean here?</b><br>The network runs on the device itself. No photo leaves the box and no internet is needed, so it is fast, private and has no running costs.</p>
+<h2>Raspberry Pi and hardware</h2>
+<p><b>7. Why a Raspberry Pi?</b><br>It is the smallest computer that runs Python, NumPy, OpenCV, a USB camera and a touchscreen, and still has GPIO pins for the scale. Its costs are no analog input and inexact timing, which the HX711 and a filter handle.</p>
+<p><b>8. Why not an Arduino or ESP32?</b><br>Too little memory (2 kB on an Uno, about 520 kB on an ESP32), no Linux, no NumPy or OpenCV, no easy touchscreen app. The CNN would need a rewrite in C.</p>
+<p><b>9. Why GPIO 5 and GPIO 6?</b><br>They are plain GPIO pins with no second job (no I2C, SPI, serial or PWM), they sit next to each other at pins 29 and 31, and a ground is right beside them. Nothing else is blocked.</p>
+<p><b>10. Why is the HX711 powered from 3.3 V?</b><br>Its DT output swings up to its own supply voltage. At 5 V it would push 5 V into a 3.3 V GPIO pin. At 3.3 V it can never damage the Pi, and the HX711 works from 2.6 V upwards.</p>
+<p><b>11. What are pins 27 and 28?</b><br>ID_SD and ID_SC, reserved for the small memory chip on add-on boards (HATs) that the Pi reads at boot. I never use them.</p>
+<p><b>12. Why does the Pi need an HX711 at all?</b><br>The Pi has no analog input. The load cell gives a fraction of a millivolt. The HX711 amplifies it 128 times and turns it into a 24-bit number sent over two digital wires.</p>
+<p><b>13. What does rpi-lgpio do?</b><br>It provides the same RPi.GPIO functions my code uses, but implemented on the modern lgpio library and the kernel's GPIO interface, which newer systems and the Pi 5 need. It replaces python3-rpi.gpio.</p>
+<p><b>14. How is everything powered?</b><br>One official 5 V 3 A USB-C supply. The screen takes 5 V from pin 2, the camera and LED strip use USB, and the HX711 uses 3.3 V from pin 1. The kiosk draws about 1.1 A.</p>
+<p><b>15. What does the lightning symbol mean?</b><br>Under-voltage, below about 4.63 V. The Pi slows down and USB devices can drop out. The fix is the official supply and cable.</p>
+<p><b>16. Why is Linux timing a problem?</b><br>Linux can pause my program at any moment. The HX711 resets if its clock pin stays high over 60 microseconds, so a badly timed pause ruins that reading.</p>
+<h2>Images and OpenCV</h2>
+<p><b>17. What does OpenCV do in your project?</b><br>Only image handling: read the camera, find the item box by colour, pad, convert BGR to RGB and resize. The recognition is my own NumPy code; OpenCV's neural network module is never used.</p>
+<p><b>18. What is the shape of a camera frame?</b><br>(480, 640, 3): 480 rows, 640 columns, 3 colour values from 0 to 255, in BGR order.</p>
+<p><b>19. Why pad to a square instead of resizing?</b><br>Resizing a non-square crop squashes the item and destroys its shape, one of the main clues. Padding with the tray colour keeps the true shape.</p>
+<p><b>20. Why 64 x 64?</b><br>Small enough for about 2.5 million multiplications and 18 ms on the Pi, large enough to keep shape, colour and coarse texture for 12 items.</p>
+<p><b>21. What is the most important rule about preparation?</b><br>Training and the kiosk must prepare images identically. I enforce it with one shared prepare_image function in cnn_numpy.py used by both.</p>
+<h2>The CNN</h2>
+<p><b>22. Why a CNN and not a dense network?</b><br>A dense layer on 12,288 pixels would need about 786,000 weights for 64 outputs and would learn every pattern separately at every position. A convolution uses small shared filters, so it has few weights and finds a pattern anywhere.</p>
+<p><b>23. Describe your network.</b><br>Input 3 x 64 x 64. Three blocks of 3 x 3 convolution (8, 16, 32 filters), ReLU and 2 x 2 max pooling, down to 32 x 6 x 6. Flatten to 1,152, dense to 64 with ReLU, dense to 12 with softmax.</p>
+<p><b>24. How many parameters, and where?</b><br>80,604. Dense1 (1,152 x 64 + 64 = 73,792) holds 92% of them. But the three convolutions do 97% of the multiplications because their weights are reused at every position.</p>
+<p><b>25. How do you compute the output size of a convolution?</b><br>Input minus filter size plus 1, with no padding and stride 1: 64 - 3 + 1 = 62. Pooling halves it, rounding down: 29 becomes 14.</p>
+<p><b>26. How do you count conv weights?</b><br>Filters x (3 x 3 x input channels) + filters. Conv2: 16 x 72 + 16 = 1,168.</p>
+<p><b>27. What does ReLU do and why is it needed?</b><br>It keeps positives and zeroes negatives. Without it, stacked layers collapse into one linear layer and learn nothing extra.</p>
+<p><b>28. What does max pooling do?</b><br>Keeps the biggest number of each 2 x 2 block. It quarters the work, tolerates small shifts and lets later filters see more of the picture.</p>
+<p><b>29. What is softmax and what is its catch?</b><br>It turns 12 scores into chances that add up to 1. The catch: they always add up to 1, so an unknown item still gets a confident-looking answer.</p>
+<p><b>30. What is the backward pass of max pooling?</b><br>The gradient goes only to the position that was the maximum in the forward pass; the other three get zero. I store a mask of the winners.</p>
+<p><b>31. What is the backward pass of convolution?</b><br>Same 9-cell loop as forward. The weight gradient is the incoming gradient times the shifted input, summed over batch and positions. The input gradient adds the incoming gradient times the weights back into the same shifted block.</p>
+<p><b>32. How did you make convolution fast in NumPy?</b><br>Loop over the 9 filter cells, not the pixels. For each cell, einsum multiplies the shifted input by that cell's weights for all images and positions at once: 9 big operations instead of thousands of small ones. About 120 times faster than the loop version.</p>
+<p><b>33. Explain the einsum string 'nchw,fc->nfhw'.</b><br>n picture, c channel, h and w position, f filter. c appears in both inputs and not in the output, so it is multiplied and summed: each filter's output is the sum over channels of input times that cell's weight.</p>
+<h2>Training and data</h2>
+<p><b>34. Where did the data come from?</b><br>The 636 labelled top-view photos of version 1. I cut every labelled box into its own 64 x 64 crop, giving 1,850 crops of 12 classes.</p>
+<p><b>35. Why split by photo and not by crop?</b><br>Crops from one photo are near-copies: same light, same day. A crop-level split leaks near-twins into the test set and inflates the score. A crop split gave 97.2%; the honest photo split gave 92.6%.</p>
+<p><b>36. What are the three piles for?</b><br>Training (1,290) to learn weights, validation (277) to pick the best epoch and settings, test (283) to measure once at the end.</p>
+<p><b>37. What augmentation did you use and why only on training?</b><br>Random flip, shift up to 4 pixels, brightness 0.85 to 1.15. It teaches tolerance to small changes. Validation and test must measure the real task, so they are never changed.</p>
+<p><b>38. What loss and optimiser?</b><br>Cross-entropy, -ln of the chance given to the right class. SGD with momentum 0.9, learning rate 0.01, batch 32, 40 epochs, He initialisation.</p>
+<p><b>39. Did it overfit?</b><br>My first attempt did: 99.6% train, 84.2% validation. Augmentation and halving the dense layer to 64 units brought validation to 93.5% with training at 98.1%. I also keep the best validation epoch, 34.</p>
+<p><b>40. What does 92.6% mean?</b><br>262 of 283 test crops from 91 unseen photos were named correctly. Chance is 8.3%. It is a lab number on my own photos, roughly 89% to 96% given the test size, not a shop guarantee.</p>
+<p><b>41. What were the main confusions?</b><br>Mosambi and Lemon caused 7 of 21 mistakes; then Brinjal and Brinjal White (4), Onion and Potato (3). Tomato, Coconut and Pomegranate were perfect.</p>
+<p><b>42. How do you know your backpropagation is correct?</b><br>A numerical gradient check: for 20 random weights per layer, the central difference with eps 1e-5 in float64 against my gradient. Biggest relative difference about 5e-7. Kinks of ReLU and pooling needed a smaller eps for a few conv1 weights.</p>
+<p><b>43. Why did you drop two classes?</b><br>Capsicum had 15 photos and Chilly 17. After a 70/15/15 split there would be about 2 test photos each, which makes their scores meaningless and their learning poor.</p>
+<h2>Running on the Pi</h2>
+<p><b>44. How does the model get onto the Pi?</b><br>Train on the laptop, copy the 320 kB weights.npz with scp, and load it into the same cnn_numpy.py layer code on the Pi.</p>
+<p><b>45. How fast is it?</b><br>18 ms per forward pass on the Pi 4 (4 ms on the laptop); about 60 ms including a fresh photo, finding the box and preparing it.</p>
+<p><b>46. When does it run?</b><br>Once per item, when the weight becomes steady. That is the moment the hand has left and the item is still, and it keeps the processor idle otherwise.</p>
+<p><b>47. What happens when the network is unsure?</b><br>Below a top chance of 0.60 the screen says 'Not sure, please choose' and shows the top 3. On the test set the rule caught 11 of the 21 mistakes.</p>
+<p><b>48. Why not use a cloud server?</b><br>It needs internet, adds delay, costs money monthly and sends customer photos out of the shop. The Pi does it in 60 ms with none of those.</p>
+<h2>HX711 and weighing</h2>
+<p><b>49. How does a load cell work?</b><br>Strain gauges on an aluminium bar change resistance as it bends. Four of them in a Wheatstone bridge give a small voltage proportional to the weight: about 0.25 mV for a 412 g tomato.</p>
+<p><b>50. How do you read the HX711?</b><br>Wait for DT to go low, give 24 clock pulses on SCK reading one bit after each, biggest bit first, then a 25th pulse to select channel A with gain 128 next time.</p>
+<p><b>51. How do you turn 24 bits into a signed number?</b><br>Two's complement: if bit 23 is set, subtract 2 to the power 24 (16,777,216).</p>
+<p><b>52. What is the timing trap and how did you handle it?</b><br>SCK high for more than 60 microseconds resets the HX711. Linux pauses sometimes cause that, giving a wild reading about once every 2 minutes. A median of the last 5 readings removes every one.</p>
+<p><b>53. Why median and not average?</b><br>One huge wild value drags an average far away; it can never be the middle of 5 sorted values, so the median ignores it.</p>
+<p><b>54. How did you calibrate?</b><br>Tare with the empty tray (123,450 counts), then a 500 g weight (338,950 counts): 431.0 counts per gram, saved in config.json. grams = (raw - offset) / 431.0.</p>
+<p><b>55. Why does a straight line work?</b><br>Every step from force to number is proportional, so raw counts against grams is a straight line, fixed by zero and one known weight.</p>
+<p><b>56. When is a weight 'steady'?</b><br>When the newest 8 cleaned readings differ by less than 2 g; the billed weight is their average. It takes about 1.2 s.</p>
+<p><b>57. How accurate is the scale?</b><br>Within 2 g for 100 g, 500 g, 1 kg and 2 kg check weights, worst +2.0 g at 1 kg. Good for a prototype, not legal for trade.</p>
+<p><b>58. How do you handle drift?</b><br>The zero drifts about 1 g per hour. The filter re-tares automatically after the tray has been empty and steady for 5 s.</p>
+<h2>The app</h2>
+<p><b>59. How is the app structured?</b><br>A Tkinter window with a tick every 100 ms via root.after. Each tick reads the scale once, updates the filter, and runs a state machine: Waiting, Settling, Identifying, Showing, Remove, plus Choose and Bill.</p>
+<p><b>60. Why not a while True loop?</b><br>It would never return to Tkinter's main loop, so the screen would freeze and taps would be ignored.</p>
+<p><b>61. Why keep money in paise?</b><br>Floats cannot store most decimals exactly: 8.78 + 6.3 gives 15.079999999999998. Whole paise are exact; I convert to rupees only to print, and round half paise up.</p>
+<p><b>62. What happens if the camera fails mid-sale?</b><br>No guesses are made; the Choose screen shows the full list of 12 items, so the customer can still finish.</p>
+<p><b>63. How does it start unattended?</b><br>A systemd user service starts it after the desktop logs in and restarts it 3 s after any crash. Power-on to the first screen takes about 35 s.</p>
+<h2>The honest ones</h2>
+<p><b>64. Is it finished?</b><br>As a project, yes: every part works and is tested. As a product, no: accuracy is not measured on many shoppers, the scale is not certified, and there is no payment.</p>
+<p><b>65. What was the hardest part?</b><br>Two things: getting the convolution backward pass right and proving it with the gradient check, and making the HX711 reliable on a non-real-time Linux system.</p>
+<p><b>66. What would you change?</b><br>Collect photos from the kiosk itself and retrain on them, use the weight as a second clue for look-alike items, and read the scale faster to cut the 1.2 s wait.</p>
+<p><b>67. Why write a CNN from scratch when a framework would be better?</b><br>For a product I would use a framework and a pretrained MobileNet. Here, writing it myself meant I understand and can verify every number, the Pi needs no heavy framework, and the task was small enough that 80,604 weights reached 92.6%. It was a deliberate learning and engineering choice, not a claim that it beats a framework.</p>
+<h2 style="page-break-before: always">The one-page cheat sheet</h2>
+<div class="kv" style="font-size: 8.5pt; line-height: 1.25">
+<div>
+<h3 style="margin: 4px 0 3px 0">Numbers</h3>
+<table style="font-size: 8pt; margin: 2px 0 6px 0">
+<tbody>
+<tr><td style="padding: 2px 5px">Classes</td><td style="padding: 2px 5px">12 (Capsicum, Chilly dropped)</td></tr>
+<tr><td style="padding: 2px 5px">Input</td><td style="padding: 2px 5px">3 x 64 x 64, RGB, 0 to 1</td></tr>
+<tr><td style="padding: 2px 5px">Layers</td><td style="padding: 2px 5px">conv 8, 16, 32 (3 x 3) + pool; dense 64; dense 12</td></tr>
+<tr><td style="padding: 2px 5px">Shapes</td><td style="padding: 2px 5px">62, 31, 29, 14, 12, 6; flatten 1,152</td></tr>
+<tr><td style="padding: 2px 5px">Weights</td><td style="padding: 2px 5px">224 + 1,168 + 4,640 + 73,792 + 780 = 80,604</td></tr>
+<tr><td style="padding: 2px 5px">Multiplications</td><td style="padding: 2px 5px">about 2.5 million; conv 97%</td></tr>
+<tr><td style="padding: 2px 5px">Data</td><td style="padding: 2px 5px">636 photos, 1,850 crops; 1,290 / 277 / 283</td></tr>
+<tr><td style="padding: 2px 5px">Training</td><td style="padding: 2px 5px">SGD 0.01, momentum 0.9, batch 32, 40 epochs</td></tr>
+<tr><td style="padding: 2px 5px">Results</td><td style="padding: 2px 5px">best epoch 34; 98.1 / 93.5 / 92.6% (262 of 283)</td></tr>
+<tr><td style="padding: 2px 5px">Main confusion</td><td style="padding: 2px 5px">Mosambi and Lemon, 7 of 21</td></tr>
+<tr><td style="padding: 2px 5px">Gradient check</td><td style="padding: 2px 5px">4.9e-07 (eps 1e-5, float64)</td></tr>
+<tr><td style="padding: 2px 5px">Pi speed</td><td style="padding: 2px 5px">18 ms forward; 60 ms with photo</td></tr>
+<tr><td style="padding: 2px 5px">Confidence rule</td><td style="padding: 2px 5px">0.60; below shows top 3</td></tr>
+<tr><td style="padding: 2px 5px">HX711 pins</td><td style="padding: 2px 5px">VCC pin 1, GND pin 6, DT pin 29 (GPIO 5), SCK pin 31 (GPIO 6)</td></tr>
+<tr><td style="padding: 2px 5px">Screen pins</td><td style="padding: 2px 5px">5 V pin 2, GND pin 9</td></tr>
+<tr><td style="padding: 2px 5px">HX711</td><td style="padding: 2px 5px">gain 128, 24 bits, 10 per second; trap at 60 us</td></tr>
+<tr><td style="padding: 2px 5px">Calibration</td><td style="padding: 2px 5px">offset 123,450; 431.0 counts per gram</td></tr>
+<tr><td style="padding: 2px 5px">Filter</td><td style="padding: 2px 5px">median 5; steady 8 within 2 g; about 1.2 s</td></tr>
+<tr><td style="padding: 2px 5px">Thresholds</td><td style="padding: 2px 5px">item on 20 g, off 10 g; re-tare after 5 s empty</td></tr>
+<tr><td style="padding: 2px 5px">Accuracy of scale</td><td style="padding: 2px 5px">within 2 g, 100 g to 2 kg</td></tr>
+<tr><td style="padding: 2px 5px">Power</td><td style="padding: 2px 5px">5 V 3 A supply; 1.1 A used</td></tr>
+<tr><td style="padding: 2px 5px">Timing</td><td style="padding: 2px 5px">item down to name about 1.5 s; boot about 35 s</td></tr>
+</tbody>
+</table>
+</div>
+<div>
+<h3 style="margin: 4px 0 3px 0">Formulas</h3>
+<pre style="font-size: 7.8pt; padding: 5px 7px; margin: 2px 0 6px 0"><code>conv output   = input - 3 + 1
+pool output   = floor(input / 2)
+conv weights  = F x (9 x C) + F
+dense weights = in x out + out
+
+softmax(z)_i  = e^z_i / sum_j e^z_j
+loss          = -ln(p of right class)
+d scores      = (p - one_hot) / N
+
+v = 0.9 v - 0.01 grad ;  w = w + v
+He: w ~ normal x sqrt(2 / fan_in)
+
+check: (L(w+e) - L(w-e)) / 2e
+rel = |num - mine| / (|num| + |mine|)
+
+grams = (raw - offset) / 431.0
+cpg   = (338,950 - 123,450) / 500
+24-bit: if v &amp; 0x800000: v -= 2^24
+
+paise = (g x rpk x 100 + 500) // 1000
+412 g x Rs 35/kg = 1,442 paise</code></pre>
+<h3 style="margin: 4px 0 3px 0">Words</h3>
+<table style="font-size: 8pt; margin: 2px 0 6px 0">
+<tbody>
+<tr><td style="padding: 2px 5px">Filter</td><td style="padding: 2px 5px">small grid of weights slid over the picture</td></tr>
+<tr><td style="padding: 2px 5px">Feature map</td><td style="padding: 2px 5px">where a filter's pattern was found</td></tr>
+<tr><td style="padding: 2px 5px">Epoch</td><td style="padding: 2px 5px">one pass over all training crops</td></tr>
+<tr><td style="padding: 2px 5px">Overfitting</td><td style="padding: 2px 5px">memorising instead of learning</td></tr>
+<tr><td style="padding: 2px 5px">Leakage</td><td style="padding: 2px 5px">test information reaching training</td></tr>
+<tr><td style="padding: 2px 5px">Tare</td><td style="padding: 2px 5px">measuring the zero (offset)</td></tr>
+<tr><td style="padding: 2px 5px">Two's complement</td><td style="padding: 2px 5px">how signed whole numbers are stored</td></tr>
+<tr><td style="padding: 2px 5px">Edge inference</td><td style="padding: 2px 5px">predicting on the device itself</td></tr>
+</tbody>
+</table>
+</div>
+</div>
+<h3 style="margin: 4px 0 3px 0">The five things to say clearly</h3>
+<ol style="font-size: 9pt">
+<li><b>Everything runs on one Raspberry Pi 4</b>: camera, CNN, scale and touchscreen, no laptop, no cloud.</li>
+<li><b>The CNN is my own NumPy code</b>, forward and backward for every layer, proved by a gradient check; OpenCV only prepares the image.</li>
+<li><b>92.6% test accuracy, split by photo</b>, 262 of 283; most mistakes are Mosambi versus Lemon, and the app shows the top 3 when unsure.</li>
+<li><b>The HX711 is read straight from GPIO</b>, and a median of 5 plus an 8-readings-within-2-g rule make the weight reliable despite Linux timing.</li>
+<li><b>Money is exact</b>: whole paise from the price file, an itemised bill, and a one-tap correction for wrong items.</li>
+</ol>
+</section>

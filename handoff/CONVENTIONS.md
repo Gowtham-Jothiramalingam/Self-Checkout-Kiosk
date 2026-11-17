@@ -341,3 +341,12 @@ Example: 412 g tomato = 1,442 paise = Rs 14.42.
 - ch17.html embeds 13 files (README.md, 4 classifier, 8 kiosk) and was verified identical by script. If ANY source
   file changes, rebuild ch17 and re-check the excerpts in ch06-16 (a script compares every quoted def/class).
 - Page count so far: ch01-05 30, ch06-09 31, ch10-13 26, ch14-16 20, ch17 35 pages (A4, Chromium).
+### Added in chapters 18-21
+- ch18: ten phases 0..9, Figure 18.1; random-picture memorisation check (24 pictures, 60 steps, real); Pi gives
+  the same predictions as the laptop for all 283 test crops (predicted); failure tests: DT pulled -> "Scale not
+  responding" after 3 s; camera covered -> Choose screen with full list.
+- ch19: 32-row troubleshooting table, 4 design stories + 2 build stories (gradient-check kinks; the cable that
+  stole 30 g).
+- ch20: v1 -> v2 table of 8 changes; limits table (9 rows); 9 improvements in order (weight as a hint is #3).
+- ch21: 67 numbered questions in 9 groups; cheat sheet forced onto its own page (inline styles, page-break-before).
+- All six chapter fragments now exist. Turn 7: copy assemble.py + style.css into book/, run, check the PDF.
